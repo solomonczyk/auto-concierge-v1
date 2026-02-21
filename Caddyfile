@@ -1,0 +1,42 @@
+# Auto-Concierge Caddy Configuration
+# Automatic HTTPS with Let's Encrypt
+
+188-120-117-99.nip.io {
+    # Frontend
+    handle /* {
+        reverse_proxy frontend:80
+    }
+
+    # API endpoints
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle /docs* {
+        reverse_proxy api:8000
+    }
+
+    handle /openapi.json {
+        reverse_proxy api:8000
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# Redirect www to non-www
+www.188-120-117-99.nip.io {
+    redir https://188-120-117-99.nip.io{uri} permanent
+}

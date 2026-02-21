@@ -28,14 +28,31 @@ class UserRole(str, Enum):
     MANAGER = "manager"
     STAFF = "staff"
 
+class TariffPlan(Base):
+    __tablename__ = "tariff_plans"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True) # free, standard, pro
+    max_appointments: Mapped[int] = mapped_column(Integer, default=10)
+    max_shops: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    
+    tenants: Mapped[List["Tenant"]] = relationship("Tenant", back_populates="tariff_plan")
+
 class Tenant(Base):
     __tablename__ = "tenants"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    bot_token: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    # Stored encrypted
+    encrypted_bot_token: Mapped[Optional[str]] = mapped_column(String(500), unique=True, nullable=True)
+    # Hashed for fast lookups
+    bot_token_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, unique=True, nullable=True)
     settings_json: Mapped[dict] = mapped_column(JSON, default={})
-    tariff: Mapped[Tariff] = mapped_column(SQLEnum(Tariff), default=Tariff.FREE)
+    
+    tariff_plan_id: Mapped[int] = mapped_column(ForeignKey("tariff_plans.id"), nullable=True)
+    tariff_plan: Mapped["TariffPlan"] = relationship("TariffPlan", back_populates="tenants")
+    
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.ACTIVE)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     

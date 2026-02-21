@@ -134,16 +134,43 @@ def _waitlist_msg(service_name: str, date_str: str) -> str:
 #  Multi-tenant Helpers
 # ──────────────────────────────────────────────
 
+from app.core.security import get_token_hash, encrypt_token, decrypt_token
+from app.models.models import TariffPlan
+
 async def get_tenant_by_token(db) -> Tenant:
-    stmt = select(Tenant).where(Tenant.bot_token == settings.TELEGRAM_BOT_TOKEN)
+    token_hash = get_token_hash(settings.TELEGRAM_BOT_TOKEN)
+    
+    # RLS allows this query because current_tenant_id is NULL initially
+    stmt = select(Tenant).where(Tenant.bot_token_hash == token_hash)
     result = await db.execute(stmt)
     tenant = result.scalar_one_or_none()
+    
     if not tenant:
         # Fallback or create default for dev
-        tenant = Tenant(name="Default Service", bot_token=settings.TELEGRAM_BOT_TOKEN)
+        # Get default free tariff
+        tariff_stmt = select(TariffPlan).where(TariffPlan.name == 'free')
+        tariff_result = await db.execute(tariff_stmt)
+        free_tariff = tariff_result.scalar_one_or_none()
+        
+        tenant = Tenant(
+            name="Default Service", 
+            encrypted_bot_token=encrypt_token(settings.TELEGRAM_BOT_TOKEN),
+            bot_token_hash=token_hash,
+            tariff_plan_id=free_tariff.id if free_tariff else None
+        )
         db.add(tenant)
         await db.commit()
         await db.refresh(tenant)
+    
+    # Set context for RLS
+    tenant_id_context.set(tenant.id)
+    
+    # We use SET LOCAL within a transaction for multi-tenant isolation.
+    # This prevents the tenant_id from leaking if the connection is reused in the pool.
+    if not db.in_transaction():
+        await db.begin()
+        
+    await db.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant.id}'"))
     return tenant
 
 # ──────────────────────────────────────────────

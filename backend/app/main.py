@@ -56,6 +56,29 @@ else:
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
+from app.core.context import tenant_id_context
+from jose import jwt, JWTError
+
+@app.middleware("http")
+async def tenant_context_middleware(request, call_next):
+    # Try to get tenant_id from JWT token
+    auth_header = request.headers.get("Authorization")
+    tenant_id = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            tenant_id = payload.get("tenant_id")
+        except JWTError:
+            pass
+    
+    token = tenant_id_context.set(tenant_id)
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        tenant_id_context.reset(token)
+
 @app.middleware("http")
 async def log_requests(request, call_next):
     response = await call_next(request)

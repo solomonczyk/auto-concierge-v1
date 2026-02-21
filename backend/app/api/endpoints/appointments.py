@@ -4,11 +4,13 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
+from sqlalchemy.orm import joinedload
 from app.db.session import get_db
 from app.api import deps
-from app.models.models import Appointment, AppointmentStatus, Client, Service, User, UserRole, Tenant, Tariff
+from app.models.models import Appointment, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan
 from app.services.redis_service import RedisService 
-from pydantic import BaseModel, root_validator
+from app.services.external_integration_service import external_integration
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -103,13 +105,14 @@ async def create_appointment(
     )
     current_count = (await db.execute(stmt_count)).scalar() or 0
     
-    stmt_tenant = select(Tenant).where(Tenant.id == tenant_id)
+    stmt_tenant = select(Tenant).options(joinedload(Tenant.tariff_plan)).where(Tenant.id == tenant_id)
     tenant = (await db.execute(stmt_tenant)).scalar_one()
     
-    if tenant.tariff == Tariff.FREE and current_count >= 10:
+    max_appt = tenant.tariff_plan.max_appointments if tenant.tariff_plan else 10
+    if current_count >= max_appt:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Free tier limit reached (10 bookings). Please upgrade to Standard or Pro."
+            detail=f"Tariff limit reached ({max_appt} bookings). Please upgrade your plan."
         )
 
     # 1. Get Service to calculate duration
@@ -175,15 +178,8 @@ async def create_appointment(
         await db.commit()
         await db.refresh(new_appt)
         
-        message = {
-            "type": "NEW_APPOINTMENT",
-            "data": {
-                "id": new_appt.id,
-                "shop_id": new_appt.shop_id,
-                "start_time": new_appt.start_time.isoformat()
-            }
-        }
-        await redis.publish("appointments_updates", json.dumps(message))
+        # 3. External Integration Hook (Hardened: Persistent Redis Queue)
+        external_integration.enqueue_appointment(new_appt.id, tenant_id)
         
         return new_appt
         

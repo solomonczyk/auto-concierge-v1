@@ -18,3 +18,4 @@ gigachat>=0.1.0
 SpeechRecognition
 
 pydub
+rq==1.16.1

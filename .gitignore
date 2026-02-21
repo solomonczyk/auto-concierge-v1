@@ -22,6 +22,12 @@ build/
 
 # Docker
 postgres_data/
+infra_data/
+
+# SSL Certificates
+*.pem
+*.key
+*.crt
 
 # Binaries
 *.exe

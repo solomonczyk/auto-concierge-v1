@@ -13,6 +13,16 @@ async_session_local = async_sessionmaker(
 class Base(DeclarativeBase):
     pass
 
+from sqlalchemy import text
+from app.core.context import tenant_id_context
+
 async def get_db():
     async with async_session_local() as session:
-        yield session
+        # We use SET LOCAL within a transaction to ensure tenant_id 
+        # is scoped strictly to this request/transaction and doesn't leak 
+        # to other sessions in the connection pool.
+        async with session.begin():
+            tenant_id = tenant_id_context.get()
+            if tenant_id is not None:
+                await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_id}'"))
+            yield session
