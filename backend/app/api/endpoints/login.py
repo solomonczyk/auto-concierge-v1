@@ -1,9 +1,11 @@
 from datetime import timedelta
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.api import deps
 from app.core import security
@@ -12,14 +14,18 @@ from app.db.session import get_db
 from app.models.models import User
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/login/access-token")
+@limiter.limit("5/minute")  # Rate limit login attempts
 async def login_access_token(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends()
 ) -> Any:
     """
     OAuth2 compatible token login, get an access token for future requests
+    Rate limited to 5 attempts per minute to prevent brute force attacks.
     """
     stmt = select(User).where(User.username == form_data.username)
     result = await db.execute(stmt)

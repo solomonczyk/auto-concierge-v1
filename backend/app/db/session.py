@@ -2,7 +2,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
-engine = create_async_engine(settings.SQLALCHEMY_DATABASE_URI, echo=True)
+# Echo should only be True in development/debug mode
+engine = create_async_engine(
+    settings.SQLALCHEMY_DATABASE_URI, 
+    echo=settings.ENVIRONMENT.lower() == "development"
+)
 
 async_session_local = async_sessionmaker(
     bind=engine,

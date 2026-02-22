@@ -22,18 +22,34 @@ def get_password_hash(password: str) -> str:
 
 from cryptography.fernet import Fernet
 import base64
+import logging
 
-# Use ENCRYPTION_KEY from env if available, or derive from SECRET_KEY as fallback.
-# In production, ENCRYPTION_KEY MUST be set in .env
+logger = logging.getLogger(__name__)
+
 def get_fernet() -> Fernet:
+    """
+    Get Fernet encryption instance.
+    In production, ENCRYPTION_KEY MUST be set in environment.
+    Falls back to derived key only in development mode.
+    """
     if settings.ENCRYPTION_KEY:
         try:
             return Fernet(settings.ENCRYPTION_KEY.encode())
-        except Exception:
-            # If provided key is invalid, fallback to derivation but log/warn would be better
-            pass
-            
-    # Derive a 32-byte key from settings.SECRET_KEY for Fernet (Fallback)
+        except Exception as e:
+            logger.error(f"Invalid ENCRYPTION_KEY: {e}")
+            # In production, this is a fatal error
+            if settings.is_production:
+                raise ValueError("Invalid ENCRYPTION_KEY in production!")
+    
+    # Development fallback only
+    if settings.is_production:
+        raise ValueError(
+            "ENCRYPTION_KEY must be set in production! "
+            "Generate with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
+        )
+    
+    logger.warning("Using derived encryption key from SECRET_KEY - NOT SAFE FOR PRODUCTION!")
+    # Derive a 32-byte key from settings.SECRET_KEY for Fernet (Development only)
     key = base64.urlsafe_b64encode(settings.SECRET_KEY.ljust(32)[:32].encode())
     return Fernet(key)
 
@@ -50,7 +66,7 @@ def decrypt_token(encrypted_token: str) -> str:
     try:
         return f.decrypt(encrypted_token.encode()).decode()
     except Exception:
-        # Fallback for plain text during transition
+        # For tokens encrypted with old/fallback method
         return encrypted_token
 
 import hashlib

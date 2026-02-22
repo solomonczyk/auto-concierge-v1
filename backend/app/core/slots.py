@@ -5,10 +5,12 @@ from sqlalchemy import select, and_
 
 from app.models.models import Appointment, Shop, AppointmentStatus
 from app.db.session import get_db
+from app.core.config import settings
 
-# Configuration for working hours (could be moved to DB/Config)
-WORK_START = time(9, 0)
-WORK_END = time(18, 0)
+# Use configurable working hours from settings
+WORK_START = settings.work_start_time
+WORK_END = settings.work_end_time
+SLOT_DURATION = settings.SLOT_DURATION
 
 async def get_available_slots(
     shop_id: int,
@@ -50,13 +52,13 @@ async def get_available_slots(
         # Start from the latest of (work start) or (now + buffer)
         # Round up to the next 30 min interval for clean UI
         start_search = max(start_datetime, now)
-        minutes_to_next_slot = 30 - (start_search.minute % 30)
+        minutes_to_next_slot = SLOT_DURATION - (start_search.minute % SLOT_DURATION)
         current_time = (start_search + timedelta(minutes=minutes_to_next_slot)).replace(second=0, microsecond=0)
     else:
         current_time = start_datetime
     
-    # Step size for slots
-    step_minutes = 30 
+    # Step size for slots (use configured slot duration)
+    step_minutes = SLOT_DURATION
     
     while current_time + timedelta(minutes=service_duration_minutes) <= end_datetime:
         slot_end = current_time + timedelta(minutes=service_duration_minutes)

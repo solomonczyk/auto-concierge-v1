@@ -1,5 +1,30 @@
+from datetime import time
 from pydantic_settings import BaseSettings
 from typing import Optional
+import secrets
+import os
+
+def generate_secret_key() -> str:
+    """Generate a secure random secret key"""
+    return secrets.token_urlsafe(32)
+
+def get_env_secret_key() -> str:
+    """Get SECRET_KEY from environment or generate one for development"""
+    env_key = os.getenv("SECRET_KEY")
+    if env_key and env_key != "dev-secret-key-change-in-production":
+        return env_key
+    # Generate a new key for development (will change on restart)
+    # In production, this should always be set via environment variable
+    if os.getenv("ENVIRONMENT") == "production":
+        raise ValueError("SECRET_KEY must be set in production environment!")
+    return generate_secret_key()
+
+def get_env_encryption_key() -> Optional[str]:
+    """Get ENCRYPTION_KEY from environment"""
+    key = os.getenv("ENCRYPTION_KEY")
+    if key and key != "CHANGE_ME_USE_CRYPTOGRAPHY_FERNET_GENERATE_KEY":
+        return key
+    return None
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Autoservice MVP"
@@ -16,7 +41,7 @@ class Settings(BaseSettings):
     
     TELEGRAM_BOT_TOKEN: str = "YOUR_BOT_TOKEN_HERE" # Placeholder, should be in .env
 
-    SECRET_KEY: str = "dev-secret-key-change-in-production"
+    SECRET_KEY: str = ""  # Will be set from environment or generated
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080 # 7 days for MVP comfort
     
@@ -32,9 +57,37 @@ class Settings(BaseSettings):
     
     WEBAPP_URL: str = "http://localhost:5173/webapp"
 
+    # Environment mode
+    ENVIRONMENT: str = "development"
+
+    # Working hours configuration
+    WORK_START: int = 9  # Hour (0-23)
+    WORK_END: int = 18   # Hour (0-23)
+    SLOT_DURATION: int = 30  # Minutes
+
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def work_start_time(self) -> time:
+        return time(self.WORK_START, 0)
+
+    @property
+    def work_end_time(self) -> time:
+        return time(self.WORK_END, 0)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Set SECRET_KEY after initialization
+        if not self.SECRET_KEY:
+            self.SECRET_KEY = get_env_secret_key()
+        if self.ENCRYPTION_KEY is None:
+            self.ENCRYPTION_KEY = get_env_encryption_key()
 
     class Config:
         case_sensitive = True

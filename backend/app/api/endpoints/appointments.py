@@ -214,13 +214,23 @@ async def update_appointment_status(
     if appt.status != old_status and appt.client.telegram_id:
         from app.services.notification_service import NotificationService
         import asyncio
-        asyncio.create_task(
-            NotificationService.notify_client_status_change(
-                chat_id=appt.client.telegram_id,
-                service_name=appt.service.name,
-                new_status=appt.status.value
-            )
-        )
+        
+        # Properly handle async notification with error handling
+        async def notify_client():
+            try:
+                await NotificationService.notify_client_status_change(
+                    chat_id=appt.client.telegram_id,
+                    service_name=appt.service.name,
+                    new_status=appt.status.value
+                )
+            except Exception as notify_error:
+                # Log but don't fail the main request
+                import logging
+                logging.getLogger(__name__).error(
+                    f"Failed to send notification for appointment {appt.id}: {notify_error}"
+                )
+        
+        asyncio.create_task(notify_client())
         
     redis = RedisService.get_redis()
     message = {
@@ -248,14 +258,19 @@ async def read_appointments(
 @router.get("/{id}", response_model=AppointmentRead)
 async def read_appointment(
     id: int, 
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id)
 ):
     """
-    Get appointment by ID. 
-    Publicly accessible (for now) to allow WebApp to fetch details without login.
-    In production, this should ideally use a signed token or similar.
+    Get appointment by ID. Requires authentication.
+    Only returns appointments belonging to the current tenant.
     """
-    appt = await db.get(Appointment, id)
+    stmt = select(Appointment).where(
+        and_(Appointment.id == id, Appointment.tenant_id == tenant_id)
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return appt
