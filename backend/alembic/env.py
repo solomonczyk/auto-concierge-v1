@@ -26,11 +26,12 @@ from app.models.models import User, Shop, Service, Client, Appointment # Explici
 target_metadata = Base.metadata
 
 # Set sqlalchemy.url from settings
-config.set_main_option("sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URI)
+# Use replace('%', '%%') to escape percent signs for configparser interpolation
+config.set_main_option("sqlalchemy.url", settings.SQLALCHEMY_DATABASE_URI.replace('%', '%%'))
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = settings.SQLALCHEMY_DATABASE_URI
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -49,9 +50,9 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    from sqlalchemy.ext.asyncio import create_async_engine
+    connectable = create_async_engine(
+        settings.SQLALCHEMY_DATABASE_URI,
         poolclass=pool.NullPool,
     )
 
