@@ -199,9 +199,11 @@ async def my_appointments(message: Message) -> None:
         appointments = result.scalars().all()
 
         if not appointments:
+            logger.info(f"No appointments found for client {client.id}")
             await message.answer(_no_appointments_msg(), parse_mode="HTML")
             return
 
+        logger.info(f"Showing {len(appointments)} appointments for client {client.id}")
         await message.answer(
             _appointments_header(len(appointments)),
             parse_mode="HTML"
