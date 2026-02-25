@@ -54,7 +54,7 @@ class Tenant(Base):
     tariff_plan: Mapped["TariffPlan"] = relationship("TariffPlan", back_populates="tenants")
     
     status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.ACTIVE)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     users: Mapped[List["User"]] = relationship("User", back_populates="tenant")
     shops: Mapped[List["Shop"]] = relationship("Shop", back_populates="tenant")
@@ -97,7 +97,7 @@ class Client(Base):
     full_name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="clients")
     appointments: Mapped[List["Appointment"]] = relationship("Appointment", back_populates="client")
