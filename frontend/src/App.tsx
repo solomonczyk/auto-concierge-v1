@@ -16,6 +16,10 @@ function RequireAuth() {
 import { WebSocketProvider } from '@/contexts/WebSocketContext'
 
 function App() {
+    const baseUrl = import.meta.env.BASE_URL
+
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsUrl = wsProtocol + '//' + window.location.host + baseUrl + 'api/v1/ws'
     return (
         <AuthProvider>
             <Routes>
@@ -24,7 +28,7 @@ function App() {
 
                 <Route element={<RequireAuth />}>
                     <Route path="/" element={
-                        <WebSocketProvider url={`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/ws`}>
+                        <WebSocketProvider url={wsUrl}>
                             <DashboardLayout />
                         </WebSocketProvider>
                     }>

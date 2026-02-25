@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { format, isSameDay, startOfDay, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, addMonths, subMonths, addDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { Calendar as CalendarIcon, Clock, ChevronLeft, CheckCircle2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, ChevronLeft, CheckCircle2, Car } from 'lucide-react';
 
 declare global {
     interface Window {
@@ -109,13 +109,112 @@ const CalendarModal = ({
     );
 };
 
+// ── Car info step (inserted between service pick and date/time pick) ──────────
+function CarInfoStep({
+    carMake, setCarMake,
+    carYear, setCarYear,
+    vin, setVin,
+    onBack, onNext,
+}: {
+    carMake: string; setCarMake: (v: string) => void;
+    carYear: string; setCarYear: (v: string) => void;
+    vin: string; setVin: (v: string) => void;
+    onBack: () => void;
+    onNext: () => void;
+}) {
+    const yearNum = parseInt(carYear);
+    const yearValid = !carYear || (yearNum >= 1970 && yearNum <= new Date().getFullYear() + 1);
+    const vinValid = !vin || (vin.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/i.test(vin));
+    const canContinue = carMake.trim().length >= 2;
+
+    return (
+        <div className="p-4 bg-background min-h-screen text-foreground space-y-5 animate-in fade-in duration-500">
+            <div className="flex items-center gap-2 mb-2">
+                <Button variant="ghost" size="icon" onClick={onBack} className="-ml-2">
+                    <ChevronLeft className="w-6 h-6" />
+                </Button>
+                <h1 className="text-xl font-bold">Данные автомобиля</h1>
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+                Укажите информацию о вашем автомобиле. Это поможет мастеру подготовиться.
+            </p>
+
+            {/* Марка и модель */}
+            <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase opacity-60 flex items-center gap-1">
+                    <Car className="w-3.5 h-3.5" /> Марка и модель <span className="text-red-400">*</span>
+                </label>
+                <input
+                    type="text"
+                    placeholder="Например: Toyota Camry"
+                    value={carMake}
+                    onChange={e => setCarMake(e.target.value)}
+                    className="w-full bg-accent/40 border border-border rounded-xl px-4 py-3 text-base outline-none focus:border-primary transition-colors placeholder:opacity-40"
+                />
+            </div>
+
+            {/* Год выпуска */}
+            <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase opacity-60">Год выпуска</label>
+                <input
+                    type="number"
+                    placeholder="Например: 2019"
+                    value={carYear}
+                    onChange={e => setCarYear(e.target.value)}
+                    min={1970}
+                    max={new Date().getFullYear() + 1}
+                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base outline-none focus:border-primary transition-colors placeholder:opacity-40 ${
+                        yearValid ? 'border-border' : 'border-red-400'
+                    }`}
+                />
+                {!yearValid && <p className="text-xs text-red-400">Введите корректный год (1970–{new Date().getFullYear() + 1})</p>}
+            </div>
+
+            {/* VIN */}
+            <div className="space-y-1.5">
+                <label className="text-xs font-bold uppercase opacity-60">VIN-номер</label>
+                <input
+                    type="text"
+                    placeholder="17 символов, например: XTA21120053926700"
+                    value={vin}
+                    onChange={e => setVin(e.target.value.toUpperCase())}
+                    maxLength={17}
+                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base font-mono outline-none focus:border-primary transition-colors placeholder:opacity-40 placeholder:font-sans ${
+                        vinValid ? 'border-border' : 'border-red-400'
+                    }`}
+                />
+                <div className="flex justify-between">
+                    {!vinValid && <p className="text-xs text-red-400">VIN должен содержать ровно 17 символов (A-Z, 0-9, без I, O, Q)</p>}
+                    <p className="text-xs opacity-40 ml-auto">{vin.length}/17</p>
+                </div>
+            </div>
+
+            <div className="pt-4">
+                <Button
+                    className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20"
+                    disabled={!canContinue || !yearValid || !vinValid}
+                    onClick={onNext}
+                >
+                    ДАЛЕЕ → ВЫБРАТЬ ДАТУ И ВРЕМЯ
+                </Button>
+            </div>
+        </div>
+    );
+}
+
 export default function BookingPage() {
     const [services, setServices] = useState<Service[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
+    // Step: 'service' | 'car' | 'datetime'
+    const [step, setStep] = useState<'service' | 'car' | 'datetime'>('service');
+    // Car info
+    const [carMake, setCarMake] = useState('');
+    const [carYear, setCarYear] = useState('');
+    const [vin, setVin] = useState('');
     const [selectedDate, setSelectedDate] = useState<Date>(() => {
         const now = new Date();
-        // If it's past 18:00, default to next day
         if (now.getHours() >= 18) {
             return startOfDay(addDays(now, 1));
         }
@@ -219,8 +318,12 @@ export default function BookingPage() {
         const data = {
             service_id: selectedService.id,
             date: isWaitlist ? format(selectedDate, 'yyyy-MM-dd') : selectedTime,
-            appointment_id: appointmentId, // Include if editing
-            is_waitlist: isWaitlist
+            appointment_id: appointmentId,
+            is_waitlist: isWaitlist,
+            // Vehicle info
+            car_make: carMake.trim() || null,
+            car_year: carYear ? parseInt(carYear) : null,
+            vin: vin.trim() || null,
         };
 
         if (tg) {
@@ -247,11 +350,25 @@ export default function BookingPage() {
         tg?.close();
     };
 
-    if (selectedService) {
+    // --- Car info step ---
+    if (selectedService && step === 'car') {
+        return (
+            <CarInfoStep
+                carMake={carMake} setCarMake={setCarMake}
+                carYear={carYear} setCarYear={setCarYear}
+                vin={vin} setVin={setVin}
+                onBack={() => { setStep('service'); setSelectedService(null); }}
+                onNext={() => setStep('datetime')}
+            />
+        );
+    }
+
+    // --- Date / Time step ---
+    if (selectedService && step === 'datetime') {
         return (
             <div className="p-4 bg-background min-h-screen text-foreground space-y-6 animate-in fade-in duration-500">
                 <div className="flex items-center gap-2 mb-2">
-                    <Button variant="ghost" size="icon" onClick={() => setSelectedService(null)} className="-ml-2">
+                    <Button variant="ghost" size="icon" onClick={() => setStep('car')} className="-ml-2">
                         <ChevronLeft className="w-6 h-6" />
                     </Button>
                     <h1 className="text-xl font-bold">Детали записи</h1>
@@ -386,7 +503,7 @@ export default function BookingPage() {
                     <Card
                         key={service.id}
                         className="overflow-hidden border-none bg-accent/30 hover:bg-accent/50 transition-all active:scale-[0.98] cursor-pointer"
-                        onClick={() => setSelectedService(service)}
+                        onClick={() => { setSelectedService(service); setStep('car'); }}
                     >
                         <CardHeader className="p-4 pb-1">
                             <CardTitle className="text-lg flex justify-between items-start">

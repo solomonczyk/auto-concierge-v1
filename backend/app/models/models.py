@@ -127,6 +127,10 @@ class Appointment(Base):
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[AppointmentStatus] = mapped_column(SQLEnum(AppointmentStatus), default=AppointmentStatus.NEW, index=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+    # Vehicle info collected at booking
+    car_make: Mapped[Optional[str]] = mapped_column(String(100))   # e.g. "Toyota Camry"
+    car_year: Mapped[Optional[int]] = mapped_column(Integer)       # e.g. 2019
+    vin: Mapped[Optional[str]] = mapped_column(String(17))         # 17-char VIN
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="appointments")

@@ -60,3 +60,12 @@ def get_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_menu")]
     ])
+
+
+def get_consultation_keyboard() -> ReplyKeyboardMarkup:
+    """Keyboard shown during AI consultation — only Exit button."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Выйти из консультации")]],
+        resize_keyboard=True,
+        input_field_placeholder="✍️ Опишите проблему с автомобилем..."
+    )

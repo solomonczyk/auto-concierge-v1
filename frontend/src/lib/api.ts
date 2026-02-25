@@ -1,7 +1,7 @@
 import axios from "axios";
 
 export const api = axios.create({
-    baseURL: "/api/v1",
+    baseURL: import.meta.env.BASE_URL + "api/v1",
     headers: {
         "Content-Type": "application/json",
     },
@@ -10,7 +10,7 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem("token");
     if (token && config.headers) {
-        config.headers["Authorization"] = `Bearer ${token}`;
+        config.headers["Authorization"] = "Bearer " + token;
     }
     return config;
 });
@@ -22,7 +22,7 @@ api.interceptors.response.use(
             // If session expired, redirect to login
             if (!window.location.pathname.includes('/login')) {
                 localStorage.removeItem('token');
-                window.location.href = '/login';
+                window.location.href = import.meta.env.BASE_URL + "login";
             }
         }
         return Promise.reject(error);

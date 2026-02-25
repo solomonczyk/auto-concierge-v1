@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 import secrets
 import os
+from urllib.parse import quote_plus
 
 def generate_secret_key() -> str:
     """Generate a secure random secret key"""
@@ -57,6 +58,9 @@ class Settings(BaseSettings):
     
     WEBAPP_URL: str = "http://localhost:5173/webapp"
 
+    # Telegram admin chat ID for notifications (set in .env)
+    ADMIN_CHAT_ID: Optional[int] = None
+
     # Environment mode
     ENVIRONMENT: str = "development"
 
@@ -67,7 +71,9 @@ class Settings(BaseSettings):
 
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
-        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+        user = quote_plus(self.POSTGRES_USER)
+        password = quote_plus(self.POSTGRES_PASSWORD)
+        return f"postgresql+asyncpg://{user}:{password}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
 
     @property
     def is_production(self) -> bool:

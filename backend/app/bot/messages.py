@@ -232,3 +232,119 @@ def _booking_created_msg() -> str:
 def _booking_edited_msg() -> str:
     """Message shown when booking is edited."""
     return "Запись изменена!"
+
+
+def _consultation_start_msg() -> str:
+    """Prompt user to describe their car problem."""
+    return (
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💬 <b>Консультация с ИИ-диагностом</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Опишите проблему с вашим автомобилем.\n\n"
+        f"<i>Например:</i>\n"
+        f"• «Стучит при торможении слева»\n"
+        f"• «Двигатель троит на холодную»\n"
+        f"• «Не заводится с утра»\n\n"
+        f"ИИ проанализирует симптомы и предложит\n"
+        f"подходящие услуги. Нажмите <b>❌ Выйти</b>,\n"
+        f"чтобы вернуться в меню."
+    )
+
+
+def _diagnostic_result_msg(category: str, urgency: str, summary: str, services: list) -> str:
+    """AI diagnostic result with matched services."""
+    urgency_emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴"}.get(urgency, "⚪")
+    urgency_label = {"Low": "Низкая", "Medium": "Средняя", "High": "Высокая"}.get(urgency, urgency)
+
+    service_lines = ""
+    if services:
+        service_lines = "\n\n🔧 <b>Рекомендуемые услуги:</b>\n"
+        for svc in services[:3]:
+            price = f" — {svc.price} ₽" if hasattr(svc, "price") and svc.price else ""
+            service_lines += f"• {html.quote(svc.name)}{price}\n"
+
+    return (
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <b>Результат диагностики</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📋 <b>Категория:</b> {html.quote(category)}\n"
+        f"⚡ <b>Срочность:</b> {urgency_emoji} {urgency_label}\n\n"
+        f"💡 {html.quote(summary)}"
+        f"{service_lines}\n\n"
+        f"<i>Задайте следующий вопрос или нажмите\n"
+        f"<b>🔧 Записаться на сервис</b> снизу.</i>"
+    )
+
+
+def _consultation_ai_reply_msg(text: str) -> str:
+    """Wrap plain AI consultation answer."""
+    return (
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <b>Ответ консультанта</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{html.quote(text)}\n\n"
+        f"<i>Задайте следующий вопрос или выберите\n"
+        f"действие в меню ниже.</i>"
+    )
+
+
+def _consultation_error_msg() -> str:
+    """Message when AI fails to respond."""
+    return (
+        f"⚠️ <b>Не удалось получить ответ</b>\n\n"
+        f"Попробуйте переформулировать вопрос\n"
+        f"или обратитесь к нам напрямую."
+    )
+
+
+def _legal_info_msg() -> str:
+    """Legal information text."""
+    return (
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📄 <b>Правовая информация</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Оператор персональных данных:</b>\n"
+        f"Studio AI Solutions B&T\n\n"
+        f"<b>Используемые данные:</b>\n"
+        f"• Имя и фамилия из Telegram\n"
+        f"• Номер телефона (при регистрации)\n"
+        f"• История записей\n\n"
+        f"<b>Цель обработки:</b>\n"
+        f"Запись и обслуживание клиентов автосервиса.\n\n"
+        f"<b>Хранение:</b>\n"
+        f"Данные хранятся на защищённых серверах\n"
+        f"и не передаются третьим лицам.\n\n"
+        f"<b>Ваши права:</b>\n"
+        f"Вы вправе запросить удаление данных,\n"
+        f"написав в поддержку.\n\n"
+        f"🌐 <a href='https://bt-aistudio.ru'>bt-aistudio.ru</a>"
+    )
+
+
+def _unknown_text_msg() -> str:
+    """Shown when user sends unrecognized text outside dialogs."""
+    return (
+        f"Воспользуйтесь кнопками меню ниже 👇\n\n"
+        f"Или нажмите <b>💬 Консультация</b>,\n"
+        f"чтобы задать вопрос нашему ИИ-консультанту."
+    )
+
+
+def _admin_new_booking_msg(client_name: str, phone: str, service_name: str, time_str: str) -> str:
+    """Notification to admin about new booking."""
+    return (
+        f"🆕 <b>Новая запись!</b>\n\n"
+        f"👤 {html.quote(client_name)}\n"
+        f"📞 <code>{phone}</code>\n"
+        f"🔧 {html.quote(service_name)}\n"
+        f"🕐 {time_str}"
+    )
+
+
+def _admin_cancelled_msg(appt_id: int, client_name: str, service_name: str) -> str:
+    """Notification to admin about cancelled booking."""
+    return (
+        f"❌ <b>Запись #{appt_id} отменена клиентом</b>\n\n"
+        f"👤 {html.quote(client_name)}\n"
+        f"🔧 {html.quote(service_name)}"
+    )
