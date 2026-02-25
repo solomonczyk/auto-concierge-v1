@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional
 from gigachat import GigaChat
@@ -72,7 +73,8 @@ class AIService:
                 "temperature": 0.7
             }
             
-            response = self._client.chat(payload)
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self._client.chat(payload))
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"GigaChat error: {e}")

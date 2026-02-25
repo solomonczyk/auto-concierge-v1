@@ -46,7 +46,7 @@ config_module.settings = test_settings
 
 from app.db.session import Base, get_db
 from app.main import app
-from app.models.models import User, Shop, TariffPlan
+from app.models.models import User, Shop, TariffPlan, Tenant, TenantStatus, UserRole
 from app.core.security import get_password_hash
 
 
@@ -90,21 +90,34 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
                 is_active=True
             )
             session.add(tariff)
+            await session.flush()  # get tariff.id
+
+            # Create test tenant
+            tenant = Tenant(
+                id=1,
+                name="Test Tenant",
+                status=TenantStatus.ACTIVE,
+                tariff_plan_id=tariff.id
+            )
+            session.add(tenant)
+            await session.flush()  # get tenant.id
             
-            # Create test shop
+            # Create test shop with required tenant_id
             shop = Shop(
+                tenant_id=1,
                 name="Test Shop",
                 address="Test Address",
                 phone="+1234567890"
             )
             session.add(shop)
+            await session.flush()  # get shop.id
             
             # Create test user
             user = User(
                 username="admin",
                 hashed_password=get_password_hash("admin"),
                 is_active=True,
-                role="admin",
+                role=UserRole.ADMIN,
                 tenant_id=1
             )
             session.add(user)
