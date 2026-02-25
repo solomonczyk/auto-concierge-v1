@@ -22,6 +22,7 @@ from app.bot.keyboards import (
     get_main_keyboard,
     get_appointment_keyboard,
     get_consultation_keyboard,
+    get_service_suggestion_keyboard,
 )
 from app.bot.messages import (
     _welcome_msg, _contact_linked_msg, _contact_new_msg,
@@ -278,10 +279,22 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
 
         # Stay in followup state so user can ask more
         await state.set_state(ConsultForm.waiting_for_followup)
+
+        # If we have matched services, show an inline button for the best match
+        kb = get_consultation_keyboard()
+        reply_markup = kb
+        if diagnosis and diagnosis.confidence > 0.3 and matched:
+            # We can only attach one reply_markup to answer. 
+            # In aiogram, if we want an inline keyboard AND a reply keyboard, 
+            # we must send them together? Actually, you can only have ONE reply_markup per message.
+            # However, we can send the response with the Inline Keyboard, 
+            # and the Reply Keyboard is already persistent for the user.
+            reply_markup = get_service_suggestion_keyboard(matched[0].id)
+
         await message.answer(
             reply,
             parse_mode="HTML",
-            reply_markup=get_consultation_keyboard()
+            reply_markup=reply_markup
         )
 
     except Exception as e:

@@ -69,3 +69,16 @@ def get_consultation_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="✍️ Опишите проблему с автомобилем..."
     )
+
+
+def get_service_suggestion_keyboard(service_id: int) -> InlineKeyboardMarkup:
+    """Inline keyboard with a link to book a specific service."""
+    webapp_url = f"{settings.WEBAPP_URL}?service_id={service_id}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔧 Записаться на эту услугу",
+                web_app=WebAppInfo(url=webapp_url)
+            )
+        ]
+    ])
