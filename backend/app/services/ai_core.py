@@ -84,12 +84,26 @@ class AICore:
         # 2. Match by keywords in context_text if no category matches
         if not matched_services and context_text:
             text_lower = context_text.lower()
+            # Split context text into words and remove punctuation
+            import re
+            text_words = re.findall(r'\b\w{3,}\b', text_lower)
+            
             for service in db_services:
-                # Basic keyword matching (e.g. "масло" for "Замена масла")
-                # Split service name into keywords
-                keywords = [k.strip().lower() for k in service.name.split() if len(k) > 3]
-                if any(kw in text_lower for kw in keywords):
-                    matched_services.append(service)
+                # Split service name into keywords (stems)
+                # We take the first 4 characters of each significant word in the service name
+                service_keywords = [k.strip().lower()[:4] for k in service.name.split() if len(k) >= 3]
+                
+                # Check if any service keyword prefix matches any text word prefix
+                matched_this = False
+                for skw in service_keywords:
+                    for word in text_words:
+                        # Check if one is a prefix of another or vice versa (fuzzy stem match)
+                        if word.startswith(skw) or skw.startswith(word[:4]):
+                            matched_services.append(service)
+                            matched_this = True
+                            break
+                    if matched_this:
+                        break
         
         # 3. If no specific matches, suggest general diagnostics if appropriate
         if not matched_services and ("проблема" in context_text.lower() or "сломалось" in context_text.lower()):
