@@ -287,12 +287,12 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
         await state.set_state(ConsultForm.waiting_for_followup)
 
         # If we have matched services, show an inline button for the best match
-        reply_markup = get_consultation_keyboard()
+        # We prioritize the "Book" button if a match is found.
         if matched:
-            # Combine the Inline Keyboard (Book) with the Reply Keyboard if possible, 
-            # but aiogram 3.x reply_markup only holds ONE keyboard.
-            # In this context, the Inline Keyboard is better for the action.
             reply_markup = get_service_suggestion_keyboard(matched[0].id)
+        else:
+            # Fallback to the persistent consultation keyboard
+            reply_markup = get_consultation_keyboard()
 
         await message.answer(
             reply,

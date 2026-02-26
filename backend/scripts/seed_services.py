@@ -20,6 +20,7 @@ POPULAR_SERVICES = [
     {"name": "Заправка кондиционера", "duration": 40, "price": 2500.0},
     {"name": "Замена ремня ГРМ", "duration": 180, "price": 8000.0},
     {"name": "Промывка инжектора", "duration": 60, "price": 3500.0},
+    {"name": "Диагностика электрооборудования", "duration": 40, "price": 1000.0},
 ]
 
 async def seed():

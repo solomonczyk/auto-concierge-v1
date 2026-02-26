@@ -89,24 +89,25 @@ class AICore:
             text_words = re.findall(r'\b\w{3,}\b', text_lower)
             
             for service in db_services:
-                # Split service name into keywords (stems)
-                # We take the first 4 characters of each significant word in the service name
-                service_keywords = [k.strip().lower()[:4] for k in service.name.split() if len(k) >= 3]
+                # Split service name into keywords
+                name_words = [k.strip().lower() for k in service.name.split() if len(k) >= 3]
                 
-                # Check if any service keyword prefix matches any text word prefix
+                # Bi-directional prefix/substring matching
                 matched_this = False
-                for skw in service_keywords:
+                for skw in name_words:
+                    # Take stem (first 4 chars)
+                    stem = skw[:4]
                     for word in text_words:
-                        # Check if one is a prefix of another or vice versa (fuzzy stem match)
-                        if word.startswith(skw) or skw.startswith(word[:4]):
+                        # Check if stem matches or words are very similar
+                        if word.startswith(stem) or stem.startswith(word[:4]):
                             matched_services.append(service)
                             matched_this = True
                             break
                     if matched_this:
                         break
         
-        # 3. If no specific matches, suggest general diagnostics if appropriate
-        if not matched_services and ("проблема" in context_text.lower() or "сломалось" in context_text.lower()):
+        # 3. Last resort: if "диагностика" is anywhere in context, suggest it
+        if not matched_services and "диагност" in context_text.lower():
             for service in db_services:
                 if "диагностика" in service.name.lower():
                     matched_services.append(service)
