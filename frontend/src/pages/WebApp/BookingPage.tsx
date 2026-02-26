@@ -73,13 +73,20 @@ const CalendarModal = ({
                         {calendarDays.map(day => {
                             const isSelected = isSameDay(day, selectedDate);
                             const isCurrentMonth = isSameMonth(day, monthStart);
-                            const isPast = startOfDay(day) < startOfDay(new Date());
-                            const isTooFar = startOfDay(day) > addDays(startOfDay(new Date()), 30);
+                            const now = new Date();
+                            const isPast = startOfDay(day) < startOfDay(now);
+
+                            // Inactivate today if past working hours (18:00)
+                            const isToday = isSameDay(day, now);
+                            const isWorkDayEnded = now.getHours() >= 18;
+                            const isTodayDisabled = isToday && isWorkDayEnded;
+
+                            const isTooFar = startOfDay(day) > addDays(startOfDay(now), 30);
 
                             return (
                                 <button
                                     key={day.toISOString()}
-                                    disabled={isPast || isTooFar}
+                                    disabled={isPast || isTooFar || isTodayDisabled}
                                     onClick={() => {
                                         onSelect(day);
                                         onClose();
@@ -89,7 +96,7 @@ const CalendarModal = ({
                                         ${isSelected ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30 scale-110 z-10' : ''}
                                         ${!isSelected && isCurrentMonth ? 'hover:bg-accent' : ''}
                                         ${!isCurrentMonth ? 'opacity-20' : ''}
-                                        ${(isPast || isTooFar) && !isSelected ? 'opacity-10 cursor-not-allowed grayscale' : ''}
+                                        ${(isPast || isTooFar || isTodayDisabled) && !isSelected ? 'opacity-10 cursor-not-allowed grayscale' : ''}
                                     `}
                                 >
                                     {format(day, 'd')}
@@ -164,9 +171,8 @@ function CarInfoStep({
                     onChange={e => setCarYear(e.target.value)}
                     min={1970}
                     max={new Date().getFullYear() + 1}
-                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base outline-none focus:border-primary transition-colors placeholder:opacity-40 ${
-                        yearValid ? 'border-border' : 'border-red-400'
-                    }`}
+                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base outline-none focus:border-primary transition-colors placeholder:opacity-40 ${yearValid ? 'border-border' : 'border-red-400'
+                        }`}
                 />
                 {!yearValid && <p className="text-xs text-red-400">Введите корректный год (1970–{new Date().getFullYear() + 1})</p>}
             </div>
@@ -180,9 +186,8 @@ function CarInfoStep({
                     value={vin}
                     onChange={e => setVin(e.target.value.toUpperCase())}
                     maxLength={17}
-                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base font-mono outline-none focus:border-primary transition-colors placeholder:opacity-40 placeholder:font-sans ${
-                        vinValid ? 'border-border' : 'border-red-400'
-                    }`}
+                    className={`w-full bg-accent/40 border rounded-xl px-4 py-3 text-base font-mono outline-none focus:border-primary transition-colors placeholder:opacity-40 placeholder:font-sans ${vinValid ? 'border-border' : 'border-red-400'
+                        }`}
                 />
                 <div className="flex justify-between">
                     {!vinValid && <p className="text-xs text-red-400">VIN должен содержать ровно 17 символов (A-Z, 0-9, без I, O, Q)</p>}
@@ -507,7 +512,9 @@ export default function BookingPage() {
                     >
                         <CardHeader className="p-4 pb-1">
                             <CardTitle className="text-lg flex justify-between items-start">
-                                <span className="font-bold">{service.name}</span>
+                                <span className="font-bold">
+                                    {service.name.charAt(0).toUpperCase() + service.name.slice(1)}
+                                </span>
                                 <span className="text-primary font-black">{service.base_price} ₽</span>
                             </CardTitle>
                         </CardHeader>
