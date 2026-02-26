@@ -81,36 +81,62 @@ class AICore:
                 if diag_cat in service.name.lower() or diag_cat in (service.description or "").lower():
                     matched_services.append(service)
         
-        # 2. Match by keywords in context_text if no category matches
+        # 2. Match by keywords in context_text (Aggressive matching)
         if not matched_services and context_text:
             text_lower = context_text.lower()
-            # Split context text into words and remove punctuation
             import re
             text_words = re.findall(r'\b\w{3,}\b', text_lower)
             
+            # Common car stems mapping to categories or general services
+            car_stems = {
+                "диаг": "диагностика",
+                "свет": "электрооборудования",
+                "ламп": "электрооборудования",
+                "элект": "электрооборудования",
+                "ходо": "ходовой",
+                "подв": "ходовой",
+                "стуч": "ходовой",
+                "торм": "тормозных",
+                "двиг": "компьютерная",
+                "масл": "масла",
+                "фильт": "фильтра"
+            }
+
             for service in db_services:
-                # Split service name into keywords
-                name_words = [k.strip().lower() for k in service.name.split() if len(k) >= 3]
+                svc_name = service.name.lower()
+                # Check if any car stem in text matches this service
+                for stem, match_term in car_stems.items():
+                    if any(word.startswith(stem) for word in text_words) and match_term in svc_name:
+                        matched_services.append(service)
+                        break
                 
-                # Bi-directional prefix/substring matching
+                if service in matched_services:
+                    continue
+
+                # Normal word-based matching
+                name_words = [k.strip().lower() for k in service.name.split() if len(k) >= 3]
                 matched_this = False
                 for skw in name_words:
-                    # Take stem (first 4 chars)
-                    stem = skw[:4]
+                    skw_stem = skw[:4]
                     for word in text_words:
-                        # Check if stem matches or words are very similar
-                        if word.startswith(stem) or stem.startswith(word[:4]):
+                        if word.startswith(skw_stem) or skw_stem.startswith(word[:4]):
                             matched_services.append(service)
                             matched_this = True
                             break
                     if matched_this:
                         break
         
-        # 3. Last resort: if "диагностика" is anywhere in context, suggest it
-        if not matched_services and "диагност" in context_text.lower():
+        # 3. Final Fallback: if we found nothing but there's a problem, suggest general diagnostics
+        if not matched_services and any(kw in context_text.lower() for kw in ["проблем", "сломал", "нужн", "помощ", "диагност"]):
             for service in db_services:
-                if "диагностика" in service.name.lower():
+                if "компьютерная диагностика" in service.name.lower():
                     matched_services.append(service)
+                    break
+            if not matched_services: # If not found, any diagnostics
+                for service in db_services:
+                    if "диагностика" in service.name.lower():
+                        matched_services.append(service)
+                        break
                     
         return matched_services
 

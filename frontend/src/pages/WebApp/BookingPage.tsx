@@ -280,6 +280,16 @@ export default function BookingPage() {
                     } catch (apptErr) {
                         console.error("Failed to fetch appointment", apptErr);
                     }
+                } else {
+                    // Check for direct service_id link
+                    const serviceId = urlParams.get('service_id');
+                    if (serviceId) {
+                        const service = servicesRes.data.find((s: Service) => s.id === parseInt(serviceId));
+                        if (service) {
+                            setSelectedService(service);
+                            setStep('car'); // Proceed to car info
+                        }
+                    }
                 }
             } catch (err) {
                 console.error("Failed to fetch data", err);

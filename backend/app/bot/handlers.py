@@ -287,12 +287,22 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
         await state.set_state(ConsultForm.waiting_for_followup)
 
         # If we have matched services, show an inline button for the best match
-        # We prioritize the "Book" button if a match is found.
         if matched:
             reply_markup = get_service_suggestion_keyboard(matched[0].id)
         else:
-            # Fallback to the persistent consultation keyboard
-            reply_markup = get_consultation_keyboard()
+            # Fallback: if case involves a car problem, suggest any diagnostics
+            diagnostic_svc = None
+            if any(kw in (user_text + reply_text).lower() for kw in ["диагност", "сломал", "проблем", "помощ", "нужн"]):
+                for s in db_services:
+                    if "диагностика" in s.name.lower():
+                        diagnostic_svc = s
+                        break
+            
+            if diagnostic_svc:
+                reply_markup = get_service_suggestion_keyboard(diagnostic_svc.id)
+            else:
+                # Fallback to the persistent consultation keyboard
+                reply_markup = get_consultation_keyboard()
 
         await message.answer(
             reply,
