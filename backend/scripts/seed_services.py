@@ -37,7 +37,8 @@ async def seed():
                     new_service = Service(
                         name=svc["name"],
                         duration_minutes=svc["duration"],
-                        base_price=svc["price"]
+                        base_price=svc["price"],
+                        tenant_id=1  # Default tenant
                     )
                     to_add.append(new_service)
             
