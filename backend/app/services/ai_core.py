@@ -68,21 +68,31 @@ class AICore:
             logger.error(f"Failed to classify diagnosis: {e}")
             return None
 
-    def planner(self, diagnosis: DiagnosticResult, db_services: List[Service]) -> List[Service]:
+    def planner(self, diagnosis: Optional[DiagnosticResult], db_services: List[Service], context_text: str = "") -> List[Service]:
         """
-        Pure business logic: Matches diagnostic category to available services.
-        No LLM used here.
+        Pure business logic: Matches diagnostic category or text keywords to available services.
         """
         matched_services = []
-        diag_cat = diagnosis.category.lower()
         
-        for service in db_services:
-            # Simple keyword matching or metadata matching
-            if diag_cat in service.name.lower() or diag_cat in (service.description or "").lower():
-                matched_services.append(service)
+        # 1. Match by category (if diagnosis is high confidence)
+        if diagnosis:
+            diag_cat = diagnosis.category.lower()
+            for service in db_services:
+                if diag_cat in service.name.lower() or diag_cat in (service.description or "").lower():
+                    matched_services.append(service)
         
-        # If no specific matches, suggest general diagnostics
-        if not matched_services:
+        # 2. Match by keywords in context_text if no category matches
+        if not matched_services and context_text:
+            text_lower = context_text.lower()
+            for service in db_services:
+                # Basic keyword matching (e.g. "масло" for "Замена масла")
+                # Split service name into keywords
+                keywords = [k.strip().lower() for k in service.name.split() if len(k) > 3]
+                if any(kw in text_lower for kw in keywords):
+                    matched_services.append(service)
+        
+        # 3. If no specific matches, suggest general diagnostics if appropriate
+        if not matched_services and ("проблема" in context_text.lower() or "сломалось" in context_text.lower()):
             for service in db_services:
                 if "диагностика" in service.name.lower():
                     matched_services.append(service)

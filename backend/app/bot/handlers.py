@@ -261,10 +261,11 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
 
         # Run AI classification + diagnosis
         diagnosis = await ai_core.classify_and_diagnose(user_text, [])
+        matched = []
 
-        if diagnosis and diagnosis.confidence > 0.3:
+        if diagnosis and diagnosis.confidence > 0.4:
             # We got a confident technical diagnosis — match services
-            matched = ai_core.planner(diagnosis, db_services)
+            matched = ai_core.planner(diagnosis, db_services, context_text=user_text)
             reply = _diagnostic_result_msg(
                 category=diagnosis.category,
                 urgency=diagnosis.urgency,
@@ -278,19 +279,19 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
                 services=db_services
             )
             reply = _consultation_ai_reply_msg(reply_text)
+            
+            # Try to match services based on AI reply text or user text
+            matched = ai_core.planner(None, db_services, context_text=f"{user_text} {reply_text}")
 
         # Stay in followup state so user can ask more
         await state.set_state(ConsultForm.waiting_for_followup)
 
         # If we have matched services, show an inline button for the best match
-        kb = get_consultation_keyboard()
-        reply_markup = kb
-        if diagnosis and diagnosis.confidence > 0.3 and matched:
-            # We can only attach one reply_markup to answer. 
-            # In aiogram, if we want an inline keyboard AND a reply keyboard, 
-            # we must send them together? Actually, you can only have ONE reply_markup per message.
-            # However, we can send the response with the Inline Keyboard, 
-            # and the Reply Keyboard is already persistent for the user.
+        reply_markup = get_consultation_keyboard()
+        if matched:
+            # Combine the Inline Keyboard (Book) with the Reply Keyboard if possible, 
+            # but aiogram 3.x reply_markup only holds ONE keyboard.
+            # In this context, the Inline Keyboard is better for the action.
             reply_markup = get_service_suggestion_keyboard(matched[0].id)
 
         await message.answer(
