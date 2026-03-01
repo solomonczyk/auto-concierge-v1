@@ -270,6 +270,7 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
                 category=diagnosis.category,
                 urgency=diagnosis.urgency,
                 summary=diagnosis.summary,
+                clarifying_question=diagnosis.clarifying_question,
                 services=matched,
             )
         else:
@@ -288,14 +289,22 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
 
         # If we have matched services, show an inline button for the best match
         if matched:
+            # Sort by name length to pick most specific match first (e.g. specific diagnostics)
+            matched.sort(key=lambda s: len(s.name), reverse=True)
             reply_markup = get_service_suggestion_keyboard(matched[0].id)
         else:
             # Fallback: if case involves a car problem, suggest any diagnostics
             diagnostic_svc = None
-            if any(kw in (user_text + reply_text).lower() for kw in ["диагност", "сломал", "проблем", "помощ", "нужн"]):
-                for s in db_services:
-                    if "диагностика" in s.name.lower():
-                        diagnostic_svc = s
+            text_to_match = (user_text + reply_text).lower()
+            if any(kw in text_to_match for kw in ["диагност", "сломал", "проблем", "помощ", "нужн", "завод", "горит", "чек"]):
+                # Order of preference for diagnostics
+                diag_prefs = ["компьютерная диагностика", "диагностика электрооборудования", "диагностика ходовой", "диагностика"]
+                for pref in diag_prefs:
+                    for s in db_services:
+                        if pref in s.name.lower():
+                            diagnostic_svc = s
+                            break
+                    if diagnostic_svc:
                         break
             
             if diagnostic_svc:

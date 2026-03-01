@@ -80,24 +80,36 @@ from app.core.context import tenant_id_context
 from jose import jwt, JWTError
 
 @app.middleware("http")
-async def tenant_context_middleware(request, call_next):
+async def tenant_context_middleware(request: Request, call_next):
     # Try to get tenant_id from JWT token
     auth_header = request.headers.get("Authorization")
     tenant_id = None
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
         try:
+            # We use options={"verify_exp": False} for the middleware if we just want the ID
+            # but better to just try/except normally.
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             tenant_id = payload.get("tenant_id")
-        except JWTError:
+        except Exception:
+            # If token is invalid/expired, we just treat it as unauthenticated
             pass
-    
-    token = tenant_id_context.set(tenant_id)
+            
+    # FALLBACK FOR WEBAPP/CLIENTS
+    if not tenant_id and settings.ENVIRONMENT == "production":
+        tenant_id = 3 # Default for the current production bot
+
+    # Set context
+    token_ctx = tenant_id_context.set(tenant_id)
     try:
         response = await call_next(request)
         return response
+    except Exception as e:
+        logger.error(f"Middleware error: {e}")
+        # Re-raise to let FastAPI handle it
+        raise
     finally:
-        tenant_id_context.reset(token)
+        tenant_id_context.reset(token_ctx)
 
 @app.middleware("http")
 async def log_requests(request, call_next):

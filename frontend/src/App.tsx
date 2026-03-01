@@ -16,6 +16,7 @@ function RequireAuth() {
 import { WebSocketProvider } from '@/contexts/WebSocketContext'
 
 function App() {
+    console.log("APP_VERSION: 1.0.3 - " + new Date().toISOString());
     const baseUrl = import.meta.env.BASE_URL
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'

@@ -24,6 +24,9 @@ async def get_available_slots(
     """
     
     # 1. Define working window for the day
+    if date.weekday() == 6:  # Sunday
+        return []
+
     start_datetime = datetime.combine(date, WORK_START)
     end_datetime = datetime.combine(date, WORK_END)
     

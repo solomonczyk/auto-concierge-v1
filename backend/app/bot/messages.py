@@ -251,7 +251,7 @@ def _consultation_start_msg() -> str:
     )
 
 
-def _diagnostic_result_msg(category: str, urgency: str, summary: str, services: list) -> str:
+def _diagnostic_result_msg(category: str, urgency: str, summary: str, clarifying_question: str, services: list) -> str:
     """AI diagnostic result with matched services."""
     urgency_emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴"}.get(urgency, "⚪")
     urgency_label = {"Low": "Низкая", "Medium": "Средняя", "High": "Высокая"}.get(urgency, urgency)
@@ -269,9 +269,10 @@ def _diagnostic_result_msg(category: str, urgency: str, summary: str, services: 
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📋 <b>Категория:</b> {html.quote(category)}\n"
         f"⚡ <b>Срочность:</b> {urgency_emoji} {urgency_label}\n\n"
-        f"💡 {html.quote(summary)}"
+        f"💡 {html.quote(summary)}\n\n"
+        f"❓ <b>Уточнение:</b> {html.quote(clarifying_question)}"
         f"{service_lines}\n\n"
-        f"<i>Задайте следующий вопрос или нажмите\n"
+        f"<i>Ответьте на вопрос или выберите\n"
         f"<b>🔧 Записаться на сервис</b> снизу.</i>"
     )
 

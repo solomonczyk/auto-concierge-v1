@@ -82,11 +82,12 @@ const CalendarModal = ({
                             const isTodayDisabled = isToday && isWorkDayEnded;
 
                             const isTooFar = startOfDay(day) > addDays(startOfDay(now), 30);
+                            const isSunday = day.getDay() === 0;
 
                             return (
                                 <button
                                     key={day.toISOString()}
-                                    disabled={isPast || isTooFar || isTodayDisabled}
+                                    disabled={isPast || isTooFar || isTodayDisabled || isSunday}
                                     onClick={() => {
                                         onSelect(day);
                                         onClose();
@@ -96,7 +97,7 @@ const CalendarModal = ({
                                         ${isSelected ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/30 scale-110 z-10' : ''}
                                         ${!isSelected && isCurrentMonth ? 'hover:bg-accent' : ''}
                                         ${!isCurrentMonth ? 'opacity-20' : ''}
-                                        ${(isPast || isTooFar || isTodayDisabled) && !isSelected ? 'opacity-10 cursor-not-allowed grayscale' : ''}
+                                        ${(isPast || isTooFar || isTodayDisabled || isSunday) && !isSelected ? 'opacity-10 cursor-not-allowed grayscale' : ''}
                                     `}
                                 >
                                     {format(day, 'd')}
@@ -212,8 +213,8 @@ export default function BookingPage() {
     const [services, setServices] = useState<Service[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
-    // Step: 'service' | 'car' | 'datetime'
-    const [step, setStep] = useState<'service' | 'car' | 'datetime'>('service');
+    // Step: 'service' | 'car' | 'datetime' | 'success'
+    const [step, setStep] = useState<'service' | 'car' | 'datetime' | 'success'>('service');
     // Car info
     const [carMake, setCarMake] = useState('');
     const [carYear, setCarYear] = useState('');
@@ -327,39 +328,73 @@ export default function BookingPage() {
         }
     }, [selectedService, selectedDate]);
 
-    const handleSubmit = (isWaitlist: boolean = false) => {
-        if (!selectedService || (!selectedTime && !isWaitlist)) return;
+    const handleSubmit = async (isWaitlist: boolean = false) => {
+        console.log("handleSubmit called", { isWaitlist, selectedService, selectedTime });
+        if (!selectedService || (!selectedTime && !isWaitlist)) {
+            alert("Ошибка: Услуга или время не выбраны!");
+            return;
+        }
+
+        const user = tg?.initDataUnsafe?.user;
+        const telegramId = user?.id || 0;
+        const fullName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : "Guest";
 
         const data = {
             service_id: selectedService.id,
             date: isWaitlist ? format(selectedDate, 'yyyy-MM-dd') : selectedTime,
-            appointment_id: appointmentId,
+            appointment_id: appointmentId ? parseInt(appointmentId) : null,
             is_waitlist: isWaitlist,
+            telegram_id: telegramId,
+            full_name: fullName,
             // Vehicle info
             car_make: carMake.trim() || null,
             car_year: carYear ? parseInt(carYear) : null,
             vin: vin.trim() || null,
         };
 
-        if (tg) {
-            tg.sendData(JSON.stringify(data));
-        } else {
-            console.log("WebApp Data would be sent:", data);
-            alert(isWaitlist ? "Заявка в лист ожидания отправлена!" : (isEditMode ? "Запись изменена!" : "Запись создана!"));
+        console.log("Submitting booking data:", data);
+        try {
+            setLoading(true);
+            tg?.MainButton?.showProgress();
+
+            const response = await api.post('/appointments/public', data);
+            console.log("Booking response:", response.data);
+
+            setStep('success');
+            tg?.MainButton?.hide();
+            tg?.HapticFeedback?.notificationOccurred('success');
+        } catch (err: any) {
+            console.error("Booking failed", err);
+            const errorMsg = err.response?.data?.detail || "Произошла ошибка при бронировании";
+            alert(errorMsg);
+            tg?.MainButton.hideProgress();
+        } finally {
+            setLoading(false);
         }
     };
 
     useEffect(() => {
+        if (!tg?.MainButton) return;
+
+        const handleMainClick = () => {
+            console.log("MainButton clicked. Current state:", { carMake, carYear, vin });
+            handleSubmit(false);
+        };
+
         if (selectedService && selectedTime) {
-            tg?.MainButton.show();
-            tg?.MainButton.onClick(() => handleSubmit(false));
+            console.log("Updating MainButton params and listener");
+            tg.MainButton.setText(isEditMode ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ');
+            tg.MainButton.show();
+            tg.MainButton.offClick(handleMainClick); // Avoid duplicates if possible
+            tg.MainButton.onClick(handleMainClick);
+
+            return () => {
+                tg.MainButton.offClick(handleMainClick);
+            };
         } else {
-            tg?.MainButton.hide();
+            tg.MainButton.hide();
         }
-        return () => {
-            tg?.MainButton.offClick(() => handleSubmit(false));
-        }
-    }, [selectedService, selectedTime]);
+    }, [selectedService, selectedTime, isEditMode, carMake, carYear, vin]);
 
     const handleClose = () => {
         tg?.close();
@@ -500,13 +535,62 @@ export default function BookingPage() {
                     <Button
                         className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20"
                         disabled={!selectedTime}
-                        onClick={() => handleSubmit(false)}
+                        onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleSubmit(false);
+                        }}
                     >
                         ПОДТВЕРДИТЬ ЗАПИСЬ
                     </Button>
                 </div>
             </div>
         )
+    }
+
+    // --- Success step ---
+    if (step === 'success' && selectedService) {
+        return (
+            <div className="p-4 bg-background min-h-screen text-foreground flex flex-col items-center justify-center text-center space-y-8 animate-in zoom-in duration-500">
+                <div className="relative">
+                    <div className="absolute inset-0 bg-primary/20 blur-3xl rounded-full scale-150 animate-pulse" />
+                    <CheckCircle2 className="w-24 h-24 text-primary relative z-10" />
+                </div>
+
+                <div className="space-y-2">
+                    <h1 className="text-3xl font-black tracking-tight">ЗАПИСЬ СОЗДАНА!</h1>
+                    <p className="text-muted-foreground">Вы успешно записались на сервис</p>
+                </div>
+
+                <div className="w-full bg-accent/30 p-6 rounded-3xl border border-border space-y-4">
+                    <div className="flex justify-between items-center text-left">
+                        <span className="text-xs font-bold uppercase opacity-40">Услуга</span>
+                        <span className="font-bold text-lg">{selectedService.name}</span>
+                    </div>
+                    <div className="w-full h-px bg-border" />
+                    <div className="flex justify-between items-center text-left">
+                        <span className="text-xs font-bold uppercase opacity-40">Дата и время</span>
+                        <span className="font-bold">
+                            {format(selectedDate, 'd MMMM yyyy', { locale: ru })}
+                            {selectedTime && ` в ${format(new Date(selectedTime), 'HH:mm')}`}
+                        </span>
+                    </div>
+                </div>
+
+                <div className="w-full pt-8">
+                    <Button
+                        className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20"
+                        onClick={handleClose}
+                    >
+                        ОТЛИЧНО, СПАСИБО!
+                    </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground opacity-50">
+                    Детали записи также отправлены вам в чат бота
+                </p>
+            </div>
+        );
     }
 
     return (

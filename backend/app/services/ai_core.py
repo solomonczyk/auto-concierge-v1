@@ -13,6 +13,7 @@ class DiagnosticResult(BaseModel):
     estimated_hours: float = Field(description="Estimated time to complete the work")
     confidence: float = Field(description="Confidence score between 0 and 1")
     summary: str = Field(description="A very brief technical summary of the identified issue")
+    clarifying_question: str = Field(description="A question to clarify symptoms and confirm the diagnosis")
 
 class AICore:
     """
@@ -34,10 +35,12 @@ class AICore:
             "urgency": "Low|Medium|High",
             "estimated_hours": float,
             "confidence": float,
-            "summary": "string"
+            "summary": "string",
+            "clarifying_question": "string"
         }
         
         Categories: maintenance, engine, suspension, brakes, electrical, body, other.
+        The "clarifying_question" should be based on the symptoms but aimed at narrowing down the EXACT service needed.
         If the user is just saying hello or asking a general question, return category "other" and confidence 0.
         No conversational chatter. ONLY JSON.
         """
@@ -55,15 +58,29 @@ class AICore:
                 services=[] # No services needed for pure classification
             )
             
-            # Basic JSON extraction from response (often wrapped in backticks)
+            # Robust JSON extraction
             cleaned_json = response_text.strip()
-            if "```json" in cleaned_json:
-                cleaned_json = cleaned_json.split("```json")[-1].split("```")[0].strip()
-            elif "```" in cleaned_json:
-                cleaned_json = cleaned_json.split("```")[-1].split("```")[0].strip()
             
-            data = json.loads(cleaned_json)
-            return DiagnosticResult(**data)
+            # Find the first '{' and last '}'
+            start_idx = cleaned_json.find('{')
+            end_idx = cleaned_json.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1:
+                cleaned_json = cleaned_json[start_idx:end_idx+1]
+            
+            # Remove potential markdown formatting inside the extracted block
+            if "```json" in cleaned_json:
+                cleaned_json = cleaned_json.replace("```json", "")
+            if "```" in cleaned_json:
+                cleaned_json = cleaned_json.replace("```", "")
+            
+            try:
+                data = json.loads(cleaned_json)
+                return DiagnosticResult(**data)
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON from AI: {cleaned_json}")
+                return None
+                
         except Exception as e:
             logger.error(f"Failed to classify diagnosis: {e}")
             return None
@@ -74,14 +91,43 @@ class AICore:
         """
         matched_services = []
         
-        # 1. Match by category (if diagnosis is high confidence)
+        # 1. Strict name matching against context_text (Highest Priority)
+        if context_text:
+            context_lower = context_text.lower()
+            for service in db_services:
+                svc_name = service.name.lower()
+                # If the specific service name is mentioned in the recommendation text
+                if svc_name in context_lower:
+                    # Give preference to specific diagnostics over general ones
+                    matched_services.append(service)
+
+            if matched_services:
+                # Sort by name length descending to pick most specific one first
+                # e.g., "Диагностика электрооборудования" > "Диагностика"
+                matched_services.sort(key=lambda s: len(s.name), reverse=True)
+                return matched_services
+
+        # 2. Match by category from diagnosis (if high confidence)
         if diagnosis:
             diag_cat = diagnosis.category.lower()
+            # Map common English categories to Russian terms for matching
+            cat_map = {
+                "electrical": ["электрооборудования", "диагностика"],
+                "suspension": ["ходовой", "диагностика"],
+                "brakes": ["тормозных", "колодок"],
+                "engine": ["компьютерная", "двигателя"],
+                "maintenance": ["масла", "фильтра"],
+                "body": ["кузов"],
+            }
+            
+            search_terms = cat_map.get(diag_cat, [diag_cat])
+            
             for service in db_services:
-                if diag_cat in service.name.lower() or diag_cat in (service.description or "").lower():
+                svc_name = service.name.lower()
+                if any(term in svc_name for term in search_terms):
                     matched_services.append(service)
         
-        # 2. Match by keywords in context_text (Aggressive matching)
+        # 3. Match by keywords in context_text (Aggressive matching)
         if not matched_services and context_text:
             text_lower = context_text.lower()
             import re
@@ -90,16 +136,22 @@ class AICore:
             # Common car stems mapping to categories or general services
             car_stems = {
                 "диаг": "диагностика",
+                "элект": "электрооборудования",
                 "свет": "электрооборудования",
                 "ламп": "электрооборудования",
-                "элект": "электрооборудования",
                 "ходо": "ходовой",
                 "подв": "ходовой",
                 "стуч": "ходовой",
                 "торм": "тормозных",
-                "двиг": "компьютерная",
+                "двиг": "двигателя",
                 "масл": "масла",
-                "фильт": "фильтра"
+                "фильт": "фильтра",
+                "завод": "электрооборудования", # If it doesn't start, often battery/starter
+                "аккум": "электрооборудования",
+                "старт": "электрооборудования",
+                "колес": "шиномонтаж",
+                "резин": "шиномонтаж",
+                "шины": "шиномонтаж"
             }
 
             for service in db_services:

@@ -1,0 +1,12 @@
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'WAITLIST';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'CANCELLED';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'NEW';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'CONFIRMED';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'IN_PROGRESS';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'COMPLETED';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'waitlist';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'cancelled';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'new';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'confirmed';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'in_progress';
+ALTER TYPE appointmentstatus ADD VALUE IF NOT EXISTS 'completed';

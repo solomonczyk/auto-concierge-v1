@@ -1,9 +1,27 @@
-import logging
 from app.bot.loader import bot
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class NotificationService:
+    @staticmethod
+    async def send_raw_message(chat_id: int, text: str):
+        """Sends a generic text message to a specific chat."""
+        if not chat_id: return
+        try:
+            await bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to send raw message to {chat_id}: {e}")
+
+    @staticmethod
+    async def notify_admin(text: str):
+        """Sends a notification to the configured ADMIN_CHAT_ID."""
+        if not settings.ADMIN_CHAT_ID: return
+        try:
+            await bot.send_message(settings.ADMIN_CHAT_ID, text, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to notify admin: {e}")
+
     @staticmethod
     async def notify_client_status_change(chat_id: int, service_name: str, new_status: str):
         """
