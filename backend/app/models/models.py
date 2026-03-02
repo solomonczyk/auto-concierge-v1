@@ -97,6 +97,9 @@ class Client(Base):
     full_name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, index=True)
+    car_make: Mapped[Optional[str]] = mapped_column(String(100))
+    car_year: Mapped[Optional[int]] = mapped_column(Integer)
+    vin: Mapped[Optional[str]] = mapped_column(String(17))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="clients")

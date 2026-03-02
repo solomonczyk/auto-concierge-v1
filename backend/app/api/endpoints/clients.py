@@ -34,4 +34,17 @@ async def read_clients(
     stmt = select(Client).where(Client.tenant_id == tenant_id).offset(skip).limit(limit)
     result = await db.execute(stmt)
     clients = result.scalars().all()
+    
+    # Enrich ClientOut with formatted vehicle_info
+    for c in clients:
+        parts = []
+        if c.car_make:
+            parts.append(c.car_make)
+        if c.car_year:
+            parts.append(str(c.car_year))
+        if c.vin:
+            parts.append(f"({c.vin})")
+        
+        c.vehicle_info = " ".join(parts) if parts else None
+        
     return clients

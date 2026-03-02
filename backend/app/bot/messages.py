@@ -253,14 +253,19 @@ def _consultation_start_msg() -> str:
 
 def _diagnostic_result_msg(category: str, urgency: str, summary: str, clarifying_question: str, services: list) -> str:
     """AI diagnostic result with matched services."""
-    urgency_emoji = {"Low": "🟢", "Medium": "🟡", "High": "🔴"}.get(urgency, "⚪")
-    urgency_label = {"Low": "Низкая", "Medium": "Средняя", "High": "Высокая"}.get(urgency, urgency)
+    urgency_emoji = {
+        "Low": "🟢", "Medium": "🟡", "High": "🔴",
+        "Низкая": "🟢", "Средняя": "🟡", "Высокая": "🔴"
+    }.get(urgency, "⚪")
+    urgency_label = {
+        "Low": "Низкая", "Medium": "Средняя", "High": "Высокая"
+    }.get(urgency, urgency)
 
     service_lines = ""
     if services:
         service_lines = "\n\n🔧 <b>Рекомендуемые услуги:</b>\n"
         for svc in services[:3]:
-            price = f" — {svc.price} ₽" if hasattr(svc, "price") and svc.price else ""
+            price = f" — {svc.base_price} ₽" if hasattr(svc, "base_price") and svc.base_price else ""
             service_lines += f"• {html.quote(svc.name)}{price}\n"
 
     return (

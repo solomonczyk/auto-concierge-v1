@@ -17,6 +17,9 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
 
     const [serviceId, setServiceId] = useState<number>(0);
     const [startTime, setStartTime] = useState<string>('');
+    const [carMake, setCarMake] = useState<string>('');
+    const [carYear, setCarYear] = useState<string>('');
+    const [vin, setVin] = useState<string>('');
 
     useEffect(() => {
         if (appointment) {
@@ -25,6 +28,9 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
             const date = new Date(appointment.start_time);
             const formattedDate = date.toISOString().slice(0, 16);
             setStartTime(formattedDate);
+            setCarMake(appointment.car_make || '');
+            setCarYear(appointment.car_year?.toString() || '');
+            setVin(appointment.vin || '');
         }
     }, [appointment]);
 
@@ -35,6 +41,9 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
             id: appointment.id,
             service_id: serviceId,
             start_time: new Date(startTime).toISOString(),
+            car_make: carMake.trim() || null,
+            car_year: carYear ? parseInt(carYear) : null,
+            vin: vin.trim() || null,
         }, {
             onSuccess: () => onClose(),
         });
@@ -71,6 +80,41 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
                             value={startTime}
                             onChange={(e) => setStartTime(e.target.value)}
                             className="w-full p-2.5 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:outline-none transition-all"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold uppercase text-muted-foreground mb-1.5">Марка авто</label>
+                            <input
+                                type="text"
+                                value={carMake}
+                                onChange={(e) => setCarMake(e.target.value)}
+                                placeholder="Toyota Camry"
+                                className="w-full p-2.5 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:outline-none transition-all"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold uppercase text-muted-foreground mb-1.5">Год</label>
+                            <input
+                                type="number"
+                                value={carYear}
+                                onChange={(e) => setCarYear(e.target.value)}
+                                placeholder="2019"
+                                className="w-full p-2.5 bg-background border border-border rounded-lg text-foreground focus:ring-2 focus:ring-primary focus:outline-none transition-all"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-muted-foreground mb-1.5">VIN</label>
+                        <input
+                            type="text"
+                            value={vin}
+                            onChange={(e) => setVin(e.target.value.toUpperCase())}
+                            placeholder="17 символов"
+                            maxLength={17}
+                            className="w-full p-2.5 bg-background border border-border rounded-lg text-foreground font-mono focus:ring-2 focus:ring-primary focus:outline-none transition-all"
                         />
                     </div>
                 </div>

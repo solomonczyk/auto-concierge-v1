@@ -336,7 +336,10 @@ export default function BookingPage() {
         }
 
         const user = tg?.initDataUnsafe?.user;
-        const telegramId = user?.id || 0;
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlTelegramId = urlParams.get('telegram_id');
+
+        const telegramId = user?.id || (urlTelegramId ? parseInt(urlTelegramId) : 0);
         const fullName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : "Guest";
 
         const data = {
@@ -416,7 +419,7 @@ export default function BookingPage() {
     // --- Date / Time step ---
     if (selectedService && step === 'datetime') {
         return (
-            <div className="p-4 bg-background min-h-screen text-foreground space-y-6 animate-in fade-in duration-500">
+            <div className="p-4 pb-24 bg-background min-h-screen text-foreground space-y-6 animate-in fade-in duration-500">
                 <div className="flex items-center gap-2 mb-2">
                     <Button variant="ghost" size="icon" onClick={() => setStep('car')} className="-ml-2">
                         <ChevronLeft className="w-6 h-6" />
@@ -529,20 +532,6 @@ export default function BookingPage() {
                             </Button>
                         </div>
                     )}
-                </div>
-
-                <div className="pt-4">
-                    <Button
-                        className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20"
-                        disabled={!selectedTime}
-                        onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleSubmit(false);
-                        }}
-                    >
-                        ПОДТВЕРДИТЬ ЗАПИСЬ
-                    </Button>
                 </div>
             </div>
         )

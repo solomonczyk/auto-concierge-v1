@@ -33,7 +33,7 @@ class NotificationService:
         status_messages = {
             "confirmed": f"✅ Ваша запись на услугу «{service_name}» подтверждена!",
             "in_progress": f"🔧 Мастер приступил к работе над вашим автомобилем («{service_name}»).",
-            "done": f"🎉 Ваш автомобиль готов! Услуга «{service_name}» выполнена. Ждем вас!",
+            "completed": f"🎉 Ваш автомобиль готов! Услуга «{service_name}» выполнена. Ждем вас!",
             "cancelled": f"🚫 К сожалению, ваша запись на «{service_name}» была отменена. Пожалуйста, свяжитесь с нами для уточнения."
         }
 

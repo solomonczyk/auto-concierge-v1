@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, timezone as tz
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -27,8 +27,8 @@ async def get_available_slots(
     if date.weekday() == 6:  # Sunday
         return []
 
-    start_datetime = datetime.combine(date, WORK_START)
-    end_datetime = datetime.combine(date, WORK_END)
+    start_datetime = datetime.combine(date, WORK_START).replace(tzinfo=tz.utc)
+    end_datetime = datetime.combine(date, WORK_END).replace(tzinfo=tz.utc)
     
     # 2. Fetch existing appointments for the shop on that day
     filters = [
@@ -50,7 +50,7 @@ async def get_available_slots(
     slots = []
     
     # If today, don't show past slots
-    now = datetime.now()
+    now = datetime.now(tz.utc)
     if date == now.date():
         # Start from the latest of (work start) or (now + buffer)
         # Round up to the next 30 min interval for clean UI
@@ -69,8 +69,8 @@ async def get_available_slots(
         
         # Check collision with existing appointments
         for appt in appointments:
-            appt_start = appt.start_time.replace(tzinfo=None)
-            appt_end = appt.end_time.replace(tzinfo=None)
+            appt_start = appt.start_time
+            appt_end = appt.end_time
             
             if current_time < appt_end and slot_end > appt_start:
                 is_free = False

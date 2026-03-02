@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     GIGACHAT_CLIENT_SECRET: Optional[str] = None
     
     WEBAPP_URL: str = "http://localhost:5173/webapp"
+    
+    @property
+    def GIGACHAT_CREDENTIALS(self) -> Optional[str]:
+        # Return the secret if it contains the full credentials string (base64)
+        return self.GIGACHAT_CLIENT_SECRET
 
     # Telegram admin chat ID for notifications (set in .env)
     ADMIN_CHAT_ID: Optional[int] = None

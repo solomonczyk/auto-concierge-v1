@@ -22,6 +22,7 @@ from app.bot.keyboards import (
     get_main_keyboard,
     get_appointment_keyboard,
     get_consultation_keyboard,
+    get_consultation_result_keyboard,
     get_service_suggestion_keyboard,
 )
 from app.bot.messages import (
@@ -93,13 +94,13 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
             await message.answer(
                 _welcome_msg(client.full_name, returning=True),
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
         else:
             await message.answer(
                 _welcome_msg(message.from_user.full_name, returning=False),
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
 
 
@@ -128,7 +129,7 @@ async def contact_handler(message: Message) -> None:
             await message.answer(
                 _contact_linked_msg(client.full_name, phone),
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
         else:
             new_client = Client(
@@ -142,7 +143,7 @@ async def contact_handler(message: Message) -> None:
             await message.answer(
                 _contact_new_msg(),
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
 
 
@@ -211,7 +212,7 @@ async def my_appointments(message: Message) -> None:
 
         for appt in appointments:
             text = _appointment_card(appt)
-            keyboard = get_appointment_keyboard(appt.id)
+            keyboard = get_appointment_keyboard(appt.id, message.from_user.id)
             await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
@@ -237,7 +238,7 @@ async def consultation_exit_handler(message: Message, state: FSMContext) -> None
     await message.answer(
         _main_menu_msg(),
         parse_mode="HTML",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(message.from_user.id)
     )
 
 
@@ -250,6 +251,10 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
     # Show typing action while AI thinks
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
+    # Get chat history from state
+    state_data = await state.get_data()
+    history = state_data.get("history", [])
+
     try:
         async with async_session_local() as db:
             tenant = await get_or_create_tenant(db)
@@ -259,9 +264,10 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
             result = await db.execute(stmt)
             db_services = result.scalars().all()
 
-        # Run AI classification + diagnosis
-        diagnosis = await ai_core.classify_and_diagnose(user_text, [])
+        # Run AI classification + diagnosis, passing conversation history
+        diagnosis = await ai_core.classify_and_diagnose(user_text, history)
         matched = []
+        reply_text = ""
 
         if diagnosis and diagnosis.confidence > 0.4:
             # We got a confident technical diagnosis — match services
@@ -273,16 +279,24 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
                 clarifying_question=diagnosis.clarifying_question,
                 services=matched,
             )
+            reply_text = f"{diagnosis.summary} {diagnosis.clarifying_question}"
         else:
             # Low confidence or general question — use conversational reply
             reply_text = await ai_service.get_consultation(
                 user_message=user_text,
-                services=db_services
+                services=db_services,
+                history=history
             )
             reply = _consultation_ai_reply_msg(reply_text)
             
             # Try to match services based on AI reply text or user text
             matched = ai_core.planner(None, db_services, context_text=f"{user_text} {reply_text}")
+
+        # Update and save history (keep last 10 messages)
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": reply_text})
+        history = history[-10:]
+        await state.update_data(history=history)
 
         # Stay in followup state so user can ask more
         await state.set_state(ConsultForm.waiting_for_followup)
@@ -291,9 +305,12 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
         if matched:
             # Sort by name length to pick most specific match first (e.g. specific diagnostics)
             matched.sort(key=lambda s: len(s.name), reverse=True)
-            reply_markup = get_service_suggestion_keyboard(matched[0].id)
+            reply_markup = get_consultation_result_keyboard(matched[0].id, telegram_id=message.from_user.id)
         else:
-            # Fallback: if case involves a car problem, suggest any diagnostics
+            # Fallback: allow manual selection even if no specific match
+            reply_markup = get_consultation_result_keyboard(telegram_id=message.from_user.id) # None id is handled
+            
+            # Special case: if involves a car problem, suggest any diagnostics
             diagnostic_svc = None
             text_to_match = (user_text + reply_text).lower()
             if any(kw in text_to_match for kw in ["диагност", "сломал", "проблем", "помощ", "нужн", "завод", "горит", "чек"]):
@@ -308,10 +325,10 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
                         break
             
             if diagnostic_svc:
-                reply_markup = get_service_suggestion_keyboard(diagnostic_svc.id)
+                reply_markup = get_consultation_result_keyboard(diagnostic_svc.id, telegram_id=message.from_user.id)
             else:
                 # Fallback to the persistent consultation keyboard
-                reply_markup = get_consultation_keyboard()
+                reply_markup = get_consultation_result_keyboard(telegram_id=message.from_user.id)
 
         await message.answer(
             reply,
@@ -390,7 +407,7 @@ async def back_to_menu_handler(callback_query: CallbackQuery) -> None:
     await callback_query.message.answer(
         _main_menu_msg(),
         parse_mode="HTML",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(callback_query.from_user.id)
     )
     await callback_query.answer()
 
@@ -596,5 +613,5 @@ async def fallback_text_handler(message: Message, state: FSMContext) -> None:
     await message.answer(
         _unknown_text_msg(),
         parse_mode="HTML",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(message.from_user.id)
     )

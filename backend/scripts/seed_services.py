@@ -21,6 +21,8 @@ POPULAR_SERVICES = [
     {"name": "Замена ремня ГРМ", "duration": 180, "price": 8000.0},
     {"name": "Промывка инжектора", "duration": 60, "price": 3500.0},
     {"name": "Диагностика электрооборудования", "duration": 40, "price": 1000.0},
+    {"name": "Кузовной ремонт / Удаление вмятин", "duration": 120, "price": 5000.0},
+    {"name": "Диагностика автомобиля", "duration": 30, "price": 1000.0},
 ]
 
 async def seed():

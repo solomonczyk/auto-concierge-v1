@@ -31,17 +31,17 @@ class AICore:
         
         Output format:
         {
-            "category": "string",
-            "urgency": "Low|Medium|High",
+            "category": "Двигатель|Ходовая|Тормозная система|Электрика|Кузов|ТО|Другое",
+            "urgency": "Низкая|Средняя|Высокая",
             "estimated_hours": float,
             "confidence": float,
-            "summary": "string",
-            "clarifying_question": "string"
+            "summary": "Техническое описание проблемы на РУССКОМ ЯЗЫКЕ",
+            "clarifying_question": "Уточняющий вопрос на РУССКОМ ЯЗЫКЕ"
         }
         
-        Categories: maintenance, engine, suspension, brakes, electrical, body, other.
-        The "clarifying_question" should be based on the symptoms but aimed at narrowing down the EXACT service needed.
-        If the user is just saying hello or asking a general question, return category "other" and confidence 0.
+        IMPORTANT: All text fields ("summary", "clarifying_question") MUST be in Russian.
+        IMPORTANT: Always analyze symptoms like smoke, noise, or leaks as car problems. 
+        If the user is just saying hello or asking a completely unrelated general question (not about cars), return category "Другое" and confidence 0.
         No conversational chatter. ONLY JSON.
         """
         
@@ -51,34 +51,34 @@ class AICore:
         # can handle this strict prompt.
         
         try:
-            # Here we would normally call the LLM. 
-            # For now, we integrate with ai_service.get_consultation logic but with a JSON twist.
-            response_text = await ai_service.get_consultation(
-                user_message=f"Analyze this and return JSON: {user_message}",
-                services=[] # No services needed for pure classification
+            # Use raw chat response for strict JSON output, passing history for context
+            response_text = await ai_service.get_chat_response(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                history=history
             )
             
             # Robust JSON extraction
             cleaned_json = response_text.strip()
             
+            # If the response doesn't look like JSON at all, it's probably an error message
+            if "{" not in cleaned_json or "}" not in cleaned_json:
+                logger.warning(f"AI returned non-JSON response: {cleaned_json}")
+                return None
+
             # Find the first '{' and last '}'
             start_idx = cleaned_json.find('{')
             end_idx = cleaned_json.rfind('}')
-            
-            if start_idx != -1 and end_idx != -1:
-                cleaned_json = cleaned_json[start_idx:end_idx+1]
+            cleaned_json = cleaned_json[start_idx:end_idx+1]
             
             # Remove potential markdown formatting inside the extracted block
-            if "```json" in cleaned_json:
-                cleaned_json = cleaned_json.replace("```json", "")
-            if "```" in cleaned_json:
-                cleaned_json = cleaned_json.replace("```", "")
+            cleaned_json = cleaned_json.replace("```json", "").replace("```", "").strip()
             
             try:
                 data = json.loads(cleaned_json)
                 return DiagnosticResult(**data)
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON from AI: {cleaned_json}")
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.error(f"Failed to parse JSON from AI: {e}. Content: {cleaned_json}")
                 return None
                 
         except Exception as e:
@@ -110,14 +110,14 @@ class AICore:
         # 2. Match by category from diagnosis (if high confidence)
         if diagnosis:
             diag_cat = diagnosis.category.lower()
-            # Map common English categories to Russian terms for matching
+            # Map Russian categories to search terms
             cat_map = {
-                "electrical": ["электрооборудования", "диагностика"],
-                "suspension": ["ходовой", "диагностика"],
-                "brakes": ["тормозных", "колодок"],
-                "engine": ["компьютерная", "двигателя"],
-                "maintenance": ["масла", "фильтра"],
-                "body": ["кузов"],
+                "электрика": ["электрооборудования", "диагностика"],
+                "ходовая": ["ходовой", "диагностика"],
+                "тормозная система": ["тормозных", "колодок"],
+                "двигатель": ["компьютерная", "двигателя"],
+                "то": ["масла", "фильтра"],
+                "кузов": ["кузов"],
             }
             
             search_terms = cat_map.get(diag_cat, [diag_cat])
@@ -144,23 +144,32 @@ class AICore:
                 "стуч": "ходовой",
                 "торм": "тормозных",
                 "двиг": "двигателя",
-                "масл": "масла",
-                "фильт": "фильтра",
-                "завод": "электрооборудования", # If it doesn't start, often battery/starter
-                "аккум": "электрооборудования",
-                "старт": "электрооборудования",
-                "колес": "шиномонтаж",
-                "резин": "шиномонтаж",
-                "шины": "шиномонтаж"
+                "тяга": "компьютерная", # "нету тяги" -> engine power
+                "мощн": "компьютерная", # "потеря мощности"
+                "трои": "двигателя", # "троит"
+                "глох": "двигателя", # "глохнет"
+                "дым": "двигателя", # "дымит"
+                "чек": ["компьютерная", "диагностика"],
+                "масл": ["масла", "фильтра"],
+                "завод": ["электрооборудования"],
+                "аккум": ["электрооборудования"],
+                "вмят": ["кузов"],
+                "покрас": ["кузов"],
+                "царап": ["кузов"],
+                "шины": ["шиномонтаж"]
             }
 
             for service in db_services:
                 svc_name = service.name.lower()
                 # Check if any car stem in text matches this service
                 for stem, match_term in car_stems.items():
-                    if any(word.startswith(stem) for word in text_words) and match_term in svc_name:
-                        matched_services.append(service)
-                        break
+                    if any(word.startswith(stem) for word in text_words):
+                        # Ensure match_term is a list for consistency
+                        if isinstance(match_term, str):
+                            match_term = [match_term]
+                        if any(term in svc_name for term in match_term):
+                            matched_services.append(service)
+                            break
                 
                 if service in matched_services:
                     continue
@@ -178,13 +187,23 @@ class AICore:
                     if matched_this:
                         break
         
-        # 3. Final Fallback: if we found nothing but there's a problem, suggest general diagnostics
-        if not matched_services and any(kw in context_text.lower() for kw in ["проблем", "сломал", "нужн", "помощ", "диагност"]):
+        # 3. Final Fallback: if we found nothing but there's a problem, suggest "Диагностика автомобиля"
+        if not matched_services and any(kw in context_text.lower() for kw in ["проблем", "сломал", "диагност"]):
+            # Try to find exactly "Диагностика автомобиля" first
             for service in db_services:
-                if "компьютерная диагностика" in service.name.lower():
+                if "диагностика автомобиля" == service.name.lower():
                     matched_services.append(service)
                     break
-            if not matched_services: # If not found, any diagnostics
+            
+            # If not found, fall back to anything containing "компьютерная диагностика"
+            if not matched_services:
+                for service in db_services:
+                    if "компьютерная диагностика" in service.name.lower():
+                        matched_services.append(service)
+                        break
+            
+            # Last resort: anything with "диагностика"
+            if not matched_services:
                 for service in db_services:
                     if "диагностика" in service.name.lower():
                         matched_services.append(service)

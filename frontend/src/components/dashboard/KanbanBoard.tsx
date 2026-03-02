@@ -2,7 +2,6 @@ import { useMemo, useState, DragEvent } from 'react';
 import { useAppointments, Appointment } from '@/hooks/useAppointments';
 import { Card, CardContent } from '@/components/ui/card';
 import { format } from 'date-fns';
-import { Edit } from 'lucide-react';
 import AppointmentEditDialog from './AppointmentEditDialog';
 import { useQueryClient } from "@tanstack/react-query";
 import { useWebSocket } from "@/contexts/WebSocketContext";
@@ -20,30 +19,50 @@ const COLUMNS = [
 function DraggableCard({ appointment, onEdit, onDragStart }: {
     appointment: Appointment,
     onEdit: (appt: Appointment) => void,
-    onDragStart: (e: DragEvent, appt: Appointment) => void,
+    onDragStart: (e: DragEvent, appointment: Appointment) => void,
 }) {
     return (
         <div
             draggable
             onDragStart={(e) => onDragStart(e, appointment)}
-            className="mb-2 group relative cursor-grab active:cursor-grabbing"
+            onClick={() => onEdit(appointment)}
+            className="mb-3 group relative cursor-pointer active:cursor-grabbing transition-all duration-300"
         >
-            <Card className="hover:shadow-md transition-shadow border-l-4 border-l-primary/40">
-                <CardContent className="p-3">
-                    <div className="flex justify-between items-start">
-                        <div className="font-medium">Заказ #{appointment.id}</div>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onEdit(appointment);
-                            }}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-accent/10 text-muted-foreground hover:text-accent rounded transition-all duration-200"
-                        >
-                            <Edit size={14} className="text-muted-foreground" />
-                        </button>
+            <Card className="hover:shadow-xl hover:scale-[1.02] transition-all duration-300 border-l-4 border-l-primary/40 bg-card/60 backdrop-blur-sm overflow-hidden border-border/50">
+                <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-1">
+                        <div className="text-xs font-bold uppercase tracking-wider text-primary/70">
+                            ID #{appointment.id}
+                        </div>
+                        <div className="text-xs font-mono font-medium text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">
+                            {format(new Date(appointment.start_time), 'HH:mm')}
+                        </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                        {format(new Date(appointment.start_time), 'HH:mm')}
+
+                    <div className="font-bold text-sm text-card-foreground mb-2 line-clamp-2">
+                        {appointment.service?.name || "Услуга не указана"}
+                    </div>
+
+                    {/* Expandable info on hover */}
+                    <div className="space-y-1.5 pt-2 border-t border-border/30 opacity-60 group-hover:opacity-100 transition-opacity duration-300">
+                        <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                            <span className="shrink-0 text-primary/60 text-xs">👤</span>
+                            <span className="truncate">{appointment.client?.full_name || "Без имени"}</span>
+                        </div>
+                        {(appointment.car_make || appointment.car_year) && (
+                            <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                                <span className="shrink-0 text-primary/60 text-xs">🚗</span>
+                                <span className="truncate">
+                                    {appointment.car_make || "Авто"}{appointment.car_year ? `, ${appointment.car_year}` : ""}
+                                </span>
+                            </div>
+                        )}
+                        {appointment.notes && (
+                            <div className="flex items-start gap-2 text-[11px] font-medium text-muted-foreground italic">
+                                <span className="shrink-0 text-primary/60 text-xs">📝</span>
+                                <p className="line-clamp-2 leading-snug">{appointment.notes}</p>
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -56,7 +75,7 @@ function DroppableColumn({ id, title, appointments, onEdit, onDragStart, onDrop,
     title: string,
     appointments: Appointment[],
     onEdit: (appt: Appointment) => void,
-    onDragStart: (e: DragEvent, appt: Appointment) => void,
+    onDragStart: (e: DragEvent, appointment: Appointment) => void,
     onDrop: (e: DragEvent, columnId: string) => void,
     isOver: boolean,
 }) {

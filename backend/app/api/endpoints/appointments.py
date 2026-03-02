@@ -38,6 +38,24 @@ class AppointmentCreate(BaseModel):
     client_phone: str
     client_telegram_id: int = None
 
+class ClientShort(BaseModel):
+    id: int
+    full_name: str
+    phone: Optional[str]
+    telegram_id: Optional[int]
+
+    class Config:
+        from_attributes = True
+
+class ServiceShort(BaseModel):
+    id: int
+    name: str
+    duration_minutes: int
+    base_price: float
+
+    class Config:
+        from_attributes = True
+
 class AppointmentRead(BaseModel):
     id: int
     shop_id: int
@@ -46,6 +64,12 @@ class AppointmentRead(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+    notes: Optional[str] = None
+    car_make: Optional[str] = None
+    car_year: Optional[int] = None
+    vin: Optional[str] = None
+    client: Optional[ClientShort] = None
+    service: Optional[ServiceShort] = None
     
     class Config:
         from_attributes = True
@@ -63,8 +87,11 @@ class AppointmentStatusUpdate(BaseModel):
         return v
 
 class AppointmentUpdate(BaseModel):
-    service_id: int = None
-    start_time: datetime = None
+    service_id: Optional[int] = None
+    start_time: Optional[datetime] = None
+    car_make: Optional[str] = None
+    car_year: Optional[int] = None
+    vin: Optional[str] = None
 
 @router.patch("/{id}", response_model=AppointmentRead)
 async def update_appointment(
@@ -95,8 +122,22 @@ async def update_appointment(
         service = await db.get(Service, appt.service_id)
         appt.end_time = appt.start_time + timedelta(minutes=service.duration_minutes)
 
+    if appt_update.car_make is not None:
+        appt.car_make = appt_update.car_make
+    if appt_update.car_year is not None:
+        appt.car_year = appt_update.car_year
+    if appt_update.vin is not None:
+        appt.vin = appt_update.vin
+
     await db.commit()
-    await db.refresh(appt)
+    
+    # Re-fetch with relations to avoid lazy load errors in response validation
+    stmt = select(Appointment).options(
+        joinedload(Appointment.client), 
+        joinedload(Appointment.service)
+    ).where(Appointment.id == id)
+    result = await db.execute(stmt)
+    appt = result.scalar_one()
     
     # Broadcast update
     redis = RedisService.get_redis()
@@ -201,12 +242,19 @@ async def create_appointment(
         
         db.add(new_appt)
         await db.commit()
-        await db.refresh(new_appt)
+        
+        # Re-fetch with relations to avoid lazy load errors in response validation
+        stmt = select(Appointment).options(
+            joinedload(Appointment.client), 
+            joinedload(Appointment.service)
+        ).where(Appointment.id == new_appt.id)
+        result = await db.execute(stmt)
+        final_appt = result.scalar_one()
         
         # 3. External Integration Hook (Hardened: Persistent Redis Queue)
-        external_integration.enqueue_appointment(new_appt.id, tenant_id)
+        external_integration.enqueue_appointment(final_appt.id, tenant_id)
         
-        return new_appt
+        return final_appt
         
     finally:
         await redis.delete(lock_key)
@@ -277,7 +325,14 @@ async def read_appointments(
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(deps.get_current_tenant_id)
 ):
-    result = await db.execute(select(Appointment).where(Appointment.tenant_id == tenant_id).offset(skip).limit(limit))
+    stmt = (
+        select(Appointment)
+        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .where(Appointment.tenant_id == tenant_id)
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
     return result.scalars().all()
 
 @router.get("/{id}", response_model=AppointmentRead)
@@ -290,8 +345,10 @@ async def read_appointment(
     Get appointment by ID. Requires authentication.
     Only returns appointments belonging to the current tenant.
     """
-    stmt = select(Appointment).where(
-        and_(Appointment.id == id, Appointment.tenant_id == tenant_id)
+    stmt = (
+        select(Appointment)
+        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .where(and_(Appointment.id == id, Appointment.tenant_id == tenant_id))
     )
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
@@ -322,7 +379,14 @@ async def create_public_appointment(
         if not service or service.tenant_id != tenant_id:
             raise HTTPException(status_code=404, detail="Service not found")
 
-        # 3. Handle Rescheduling
+        # 3. Resolve Shop
+        tenant_stmt = select(Tenant).where(Tenant.id == tenant_id)
+        tenant = (await db.execute(tenant_stmt)).scalar_one()
+        shop = await get_tenant_shop(db, tenant)
+        if not shop:
+            raise HTTPException(status_code=400, detail="Shop not configured")
+
+        # 4. Handle Rescheduling
         existing_appt = None
         if payload.appointment_id:
             stmt = select(Appointment).where(
@@ -333,19 +397,21 @@ async def create_public_appointment(
             if not existing_appt:
                 raise HTTPException(status_code=404, detail="Original appointment not found")
 
-        # 4. Slot Validation (if not waitlist)
+        # 5. Slot Validation (if not waitlist)
         if not payload.is_waitlist:
             available_slots = await get_available_slots(
-                shop_id=1,
+                shop_id=shop.id,
                 service_duration_minutes=service.duration_minutes,
                 date=start_time_naive.date(),
                 db=db,
                 exclude_appointment_id=payload.appointment_id
             )
+            # available_slots are naive but represent UTC if WORK_START/END are UTC-naive
+            # start_time_naive is also naive
             if not any(slot == start_time_naive for slot in available_slots):
                 raise HTTPException(status_code=400, detail="Slot unavailable")
 
-        # 5. Get/Create Client
+        # 6. Get/Create Client
         stmt = select(Client).where(
             and_(Client.telegram_id == payload.telegram_id, Client.tenant_id == tenant_id)
         )
@@ -357,25 +423,65 @@ async def create_public_appointment(
                 tenant_id=tenant_id,
                 telegram_id=payload.telegram_id,
                 full_name=payload.full_name,
-                phone="unknown"
+                phone="unknown",
+                car_make=payload.car_make,
+                car_year=payload.car_year,
+                vin=payload.vin
             )
             db.add(client)
             await db.flush()
+        else:
+            # Update existing client info with latest car if provided
+            if payload.car_make:
+                client.car_make = payload.car_make
+            if payload.car_year:
+                client.car_year = payload.car_year
+            if payload.vin:
+                client.vin = payload.vin
+            # Also update full_name if it was Guest
+            if client.full_name == "Guest" and payload.full_name:
+                client.full_name = payload.full_name
 
-        # 6. Create/Update Appointment
-        end_time = start_time_naive + timedelta(minutes=service.duration_minutes)
+        # 7. Create/Update Appointment with Collision Protection
+        end_time_naive = start_time_naive + timedelta(minutes=service.duration_minutes)
         start_time_utc = start_time_naive.replace(tzinfo=tz.utc)
-        end_time_utc = end_time.replace(tzinfo=tz.utc)
+        end_time_utc = end_time_naive.replace(tzinfo=tz.utc)
+
+        # Collision Check immediately before booking
+        if not payload.is_waitlist:
+            # Race condition protection (Soft Lock)
+            redis = RedisService.get_redis()
+            lock_key = f"booking_lock:{shop.id}:{start_time_utc.isoformat()}"
+            is_locked = await redis.set(lock_key, "1", nx=True, ex=10)
+            if not is_locked:
+                 raise HTTPException(
+                    status_code=409,
+                    detail="This slot is currently being booked. Please try again."
+                )
+            
+            try:
+                stmt_collide = select(Appointment).where(
+                    and_(
+                        Appointment.shop_id == shop.id,
+                        Appointment.status != AppointmentStatus.CANCELLED,
+                        Appointment.status != AppointmentStatus.WAITLIST,
+                        Appointment.start_time < end_time_utc,
+                        Appointment.end_time > start_time_utc
+                    )
+                )
+                if payload.appointment_id:
+                    stmt_collide = stmt_collide.where(Appointment.id != payload.appointment_id)
+                
+                res_collide = await db.execute(stmt_collide)
+                if res_collide.scalars().first():
+                    raise HTTPException(status_code=409, detail="Slot already taken")
+            finally:
+                if not payload.appointment_id: # Only lock for new bookings to avoid complex re-locks for now
+                    await redis.delete(lock_key)
 
         status = AppointmentStatus.WAITLIST if payload.is_waitlist else (
             AppointmentStatus.CONFIRMED if payload.appointment_id else AppointmentStatus.NEW
         )
-
-        tenant_stmt = select(Tenant).where(Tenant.id == tenant_id)
-        tenant = (await db.execute(tenant_stmt)).scalar_one()
-        shop = await get_tenant_shop(db, tenant)
-        if not shop:
-            raise HTTPException(status_code=400, detail="Shop not configured")
 
         if existing_appt:
             existing_appt.service_id = payload.service_id
@@ -402,7 +508,14 @@ async def create_public_appointment(
             db.add(appt)
 
         await db.commit()
-        await db.refresh(appt)
+        
+        # Re-fetch with relations to avoid lazy load errors in response validation
+        stmt = select(Appointment).options(
+            joinedload(Appointment.client), 
+            joinedload(Appointment.service)
+        ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
+        result = await db.execute(stmt)
+        appt = result.scalar_one()
 
         # 7. Notifications
         from app.services.notification_service import NotificationService

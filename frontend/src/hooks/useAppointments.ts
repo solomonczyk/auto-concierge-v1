@@ -8,7 +8,23 @@ export interface Appointment {
     client_id: number;
     start_time: string;
     end_time: string;
-    status: "new" | "confirmed" | "in_progress" | "done" | "cancelled";
+    status: "new" | "confirmed" | "in_progress" | "done" | "cancelled" | "waitlist";
+    notes?: string;
+    car_make?: string;
+    car_year?: number;
+    vin?: string;
+    client?: {
+        id: number;
+        full_name: string;
+        phone?: string;
+        telegram_id?: number;
+    };
+    service?: {
+        id: number;
+        name: string;
+        duration_minutes: number;
+        base_price: number;
+    };
 }
 
 export function useAppointments() {
