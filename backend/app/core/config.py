@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     GIGACHAT_CLIENT_SECRET: Optional[str] = None
     
     WEBAPP_URL: str = "http://localhost:5173/webapp"
-    WEBAPP_VERSION: str = "2026-03-02-1"
+    WEBAPP_VERSION: str = "2026-03-03-1"
     
     @property
     def GIGACHAT_CREDENTIALS(self) -> Optional[str]:
