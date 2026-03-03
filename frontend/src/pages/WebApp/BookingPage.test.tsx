@@ -10,11 +10,13 @@ vi.mock('@/lib/api', () => ({
     },
 }));
 
-// Mock Telegram WebApp
+// Mock Telegram WebApp (all methods used by BookingPage)
 global.window.Telegram = {
     WebApp: {
         ready: vi.fn(),
         expand: vi.fn(),
+        setHeaderColor: vi.fn(),
+        setBackgroundColor: vi.fn(),
         MainButton: {
             setParams: vi.fn(),
             hide: vi.fn(),

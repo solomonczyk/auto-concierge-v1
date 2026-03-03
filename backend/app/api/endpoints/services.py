@@ -7,12 +7,12 @@ from app.db.session import get_db
 from app.models.models import Service, User, UserRole
 from app.api import deps
 from app.core.config import settings
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 class ServiceCreate(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1)
     duration_minutes: int
     base_price: float
 

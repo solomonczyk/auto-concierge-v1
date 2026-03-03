@@ -150,10 +150,12 @@ function CarInfoStep({
 
             {/* Марка и модель */}
             <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase opacity-60 flex items-center gap-1">
+                <label htmlFor="car-make" className="text-xs font-bold uppercase opacity-60 flex items-center gap-1">
                     <Car className="w-3.5 h-3.5" /> Марка и модель <span className="text-red-400">*</span>
                 </label>
                 <input
+                    id="car-make"
+                    data-testid="car-make"
                     type="text"
                     placeholder="Например: Toyota Camry"
                     value={carMake}
@@ -164,8 +166,10 @@ function CarInfoStep({
 
             {/* Год выпуска */}
             <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase opacity-60">Год выпуска</label>
+                <label htmlFor="car-year" className="text-xs font-bold uppercase opacity-60">Год выпуска</label>
                 <input
+                    id="car-year"
+                    data-testid="car-year"
                     type="number"
                     placeholder="Например: 2019"
                     value={carYear}
@@ -180,8 +184,10 @@ function CarInfoStep({
 
             {/* VIN */}
             <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase opacity-60">VIN-номер</label>
+                <label htmlFor="car-vin" className="text-xs font-bold uppercase opacity-60">VIN-номер</label>
                 <input
+                    id="car-vin"
+                    data-testid="car-vin"
                     type="text"
                     placeholder="17 символов, например: XTA21120053926700"
                     value={vin}
@@ -343,6 +349,7 @@ export default function BookingPage() {
         const telegramId = user?.id || (urlTelegramId ? parseInt(urlTelegramId) : 0);
         const fullName = user ? `${user.first_name} ${user.last_name || ''}`.trim() : "Guest";
 
+        const userTimezone = Intl.DateTimeFormat?.().resolvedOptions?.()?.timeZone ?? undefined;
         const data = {
             service_id: selectedService.id,
             date: isWaitlist ? format(selectedDate, 'yyyy-MM-dd') : selectedTime,
@@ -350,6 +357,7 @@ export default function BookingPage() {
             is_waitlist: isWaitlist,
             telegram_id: telegramId,
             full_name: fullName,
+            timezone: userTimezone,
             // Vehicle info
             car_make: carMake.trim() || null,
             car_year: carYear ? parseInt(carYear) : null,
@@ -533,6 +541,19 @@ export default function BookingPage() {
                             </Button>
                         </div>
                     )}
+
+                    {/* Fallback submit when not in Telegram (E2E / direct browser) */}
+                    {selectedService && selectedTime && !tg?.MainButton && (
+                        <div className="pt-6">
+                            <Button
+                                data-testid="submit-booking"
+                                className="w-full h-14 text-lg font-bold"
+                                onClick={() => handleSubmit(false)}
+                            >
+                                {isEditMode ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ'}
+                            </Button>
+                        </div>
+                    )}
                 </div>
             </div>
         )
@@ -591,6 +612,7 @@ export default function BookingPage() {
                 {services.map(service => (
                     <Card
                         key={service.id}
+                        data-testid="service-card"
                         className="overflow-hidden border-none bg-accent/30 hover:bg-accent/50 transition-all active:scale-[0.98] cursor-pointer"
                         onClick={() => { setSelectedService(service); setStep('car'); }}
                     >

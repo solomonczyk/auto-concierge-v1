@@ -102,6 +102,26 @@
 - AI planner: ГРМ/ремень → «Диагностика автомобиля»
   - Added special handling for engine + ГРМ/ремень/распред in context
   - Added car_stems «грм» и «ремн» → «диагностика автомобиля»
+- Несоответствие времени: WebApp (локальный) vs бот (UTC)
+  - Бэкенд: timezone в payload, конвертация в ZoneInfo при форматировании
+  - Фронт: передаёт Intl.DateTimeFormat().resolvedOptions().timeZone
+  - Fallback: SHOP_TIMEZONE = Europe/Moscow
+- Несоответствие услуги: консультация рекомендовала одну услугу, запись показывала другую
+  - Root cause: бот загружал услуги из tenant по токену бота, WebApp — из PUBLIC_TENANT_ID; service_id из разных tenant указывал на разные услуги
+  - Исправление: при подборе услуг для консультации используем tenant_id_for_services = PUBLIC_TENANT_ID (handlers.py)
+  - service_id в URL WebApp теперь всегда из публичного каталога и совпадает с /services/public
+- E2E: WebApp, Dashboard, Bot webhook (Playwright)
+  - frontend/e2e/: webapp-booking.spec.ts, dashboard.spec.ts, bot-webhook.spec.ts
+  - Fallback submit-кнопка в WebApp при отсутствии Telegram (для E2E и браузера)
+  - data-testid для car-make, car-year, car-vin, submit-booking
+  - Запуск: npm run test:e2e (backend + frontend должны быть запущены)
+- Покрытие тестами и верификация workflow
+  - Backend: исправлен conftest (Pydantic v2, SQLite file DB, моки Redis/Notification/rate-limit)
+  - Добавлены test_public_workflow.py: services/public, slots/public, appointments/public, полный flow, waitlist, duplicate slot
+  - Исправлены test_slots.py для timezone-aware дат
+  - Валидация ServiceCreate.name (min_length=1) для пустой строки → 422
+  - Frontend: мок Telegram WebApp (setHeaderColor, setBackgroundColor), AuthContext тесты без api.defaults
+  - Backend: 30/30 passed. Frontend: 8/8 passed
 - Каталог 100 популярных услуг автосервиса
   - Создан backend/data/services_catalog_100.json — 100 услуг с категориями, ценами, длительностью
   - Категории: двигатель, диагностика, тормоза, ходовая, шины, кондиционер, охлаждение, электрика, трансмиссия, выхлоп, кузов, стекло, мойка

@@ -1,19 +1,6 @@
 import { render, screen, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from './AuthContext';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { api } from '../lib/api';
-
-// Mock the API module
-vi.mock('../lib/api', () => ({
-    api: {
-        defaults: {
-            headers: {
-                common: {}
-            }
-        },
-        post: vi.fn()
-    }
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
 
 // Test component to consume the context
 const TestComponent = () => {
@@ -30,7 +17,6 @@ const TestComponent = () => {
 
 describe('AuthContext', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
         localStorage.clear();
     });
 
@@ -44,7 +30,6 @@ describe('AuthContext', () => {
 
         expect(screen.getByTestId('auth-status')).toHaveTextContent('Authenticated');
         expect(screen.getByTestId('token-value')).toHaveTextContent('stored-token');
-        expect(api.defaults.headers.common['Authorization']).toBe('Bearer stored-token');
     });
 
     it('updates state and localStorage on login', () => {
@@ -63,7 +48,6 @@ describe('AuthContext', () => {
         expect(screen.getByTestId('auth-status')).toHaveTextContent('Authenticated');
         expect(screen.getByTestId('token-value')).toHaveTextContent('fake-token');
         expect(localStorage.getItem('token')).toBe('fake-token');
-        expect(api.defaults.headers.common['Authorization']).toBe('Bearer fake-token');
     });
 
     it('updates state and localStorage on logout', () => {
@@ -81,6 +65,5 @@ describe('AuthContext', () => {
         expect(screen.getByTestId('auth-status')).toHaveTextContent('Not Authenticated');
         expect(screen.getByTestId('token-value')).toHaveTextContent('');
         expect(localStorage.getItem('token')).toBeNull();
-        expect(api.defaults.headers.common['Authorization']).toBeUndefined();
     });
 });

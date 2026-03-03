@@ -42,5 +42,5 @@ async def test_create_appointment_authorized(client: AsyncClient):
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["client_id"] # ID should be assigned
-    assert data["shop_id"] == 2 # Admin user belongs to Shop ID 2 (from seed script)
+    assert data["client_id"]
+    assert data["shop_id"] == 1  # Admin user belongs to test shop (id=1)

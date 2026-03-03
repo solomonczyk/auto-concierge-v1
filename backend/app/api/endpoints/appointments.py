@@ -1,5 +1,6 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone as tz
+from zoneinfo import ZoneInfo
 import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,6 +30,7 @@ class PublicBookingCreate(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+    timezone: Optional[str] = None  # e.g. Europe/Moscow, from Intl.DateTimeFormat().resolvedOptions().timeZone
 
 class AppointmentCreate(BaseModel):
     service_id: int
@@ -529,7 +531,14 @@ async def create_public_appointment(
         from app.services.notification_service import NotificationService
         import asyncio
 
-        time_str = start_time_naive.strftime('%d.%m.%Y %H:%M')
+        # Format in user's timezone so bot message matches WebApp display
+        display_tz = payload.timezone or settings.SHOP_TIMEZONE
+        try:
+            tz_obj = ZoneInfo(display_tz)
+            local_time = start_time.astimezone(tz_obj)
+        except Exception:
+            local_time = start_time
+        time_str = local_time.strftime('%d.%m.%Y %H:%M')
         
         async def notify():
             try:

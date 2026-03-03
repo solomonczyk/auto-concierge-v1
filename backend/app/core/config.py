@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     PUBLIC_TENANT_ID: Optional[int] = None
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
+    # Shop timezone for display in notifications (e.g. Europe/Moscow)
+    SHOP_TIMEZONE: str = "Europe/Moscow"
+
     # Working hours configuration
     WORK_START: int = 9  # Hour (0-23)
     WORK_END: int = 18   # Hour (0-23)
