@@ -122,6 +122,29 @@
   - Валидация ServiceCreate.name (min_length=1) для пустой строки → 422
   - Frontend: мок Telegram WebApp (setHeaderColor, setBackgroundColor), AuthContext тесты без api.defaults
   - Backend: 30/30 passed. Frontend: 8/8 passed
+## 2026-03-03 — E2E тесты: отладка и исправление под прод
+
+### Найдено и исправлено:
+- **baseURL в Playwright**: убран `/concierge` из baseURL — `page.goto('/login')` шёл на `/login` вместо `/concierge/login`
+  - Решение: baseURL = `https://bt-aistudio.ru` (или `http://localhost:5173`), все goto используют полный путь `/concierge/login`
+- **Webhook URL**: правильный путь через nginx: `/concierge/api/v1/webhook` (не `/api/v1/webhook`)
+- **Dashboard strict mode**: `getByText(/заказы|.../i)` находил 4 элемента → заменено на `getByRole('heading', { name: 'Заказы' })`
+- **service-card selector**: заменён на комбинированный `[data-testid="service-card"], div[class*="cursor-pointer"]` + фильтр `hasText: /₽/` — работает и с текущим деплоем
+- **car-make/year/vin**: заменены `getByTestId` на `getByPlaceholder` — работает без data-testid в задеплоенной версии
+- **submit-booking**: использован `.or()` — `getByTestId('submit-booking').or(getByRole('button', { name: /ПОДТВЕРДИТЬ/ }))`
+- **Fallback submit button**: НЕ был задеплоен на прод → добавлен в BookingPage.tsx и закоммичен
+- Закоммичены все изменения (96ea549), запушен на GitHub
+
+### Статус тестов после исправлений:
+- **6/7 passed** на проде (webhook: 2/2, dashboard: 3/3 ✅, webapp-service_id: 1/1 ✅)
+- **1 требует деплоя**: `полный flow WebApp` — fallback кнопка submit только в новом коде
+- После `docker-compose -f docker-compose.prod.yml up -d --build frontend` → будет 7/7
+
+### Деплой команда:
+```bash
+git pull origin main && docker-compose -f docker-compose.prod.yml up -d --build frontend
+```
+
 - Каталог 100 популярных услуг автосервиса
   - Создан backend/data/services_catalog_100.json — 100 услуг с категориями, ценами, длительностью
   - Категории: двигатель, диагностика, тормоза, ходовая, шины, кондиционер, охлаждение, электрика, трансмиссия, выхлоп, кузов, стекло, мойка
