@@ -47,17 +47,15 @@ test.describe('WebApp Booking', () => {
     const enabledDay = calendarGrid.locator('button:not([disabled])').filter({ hasText: /^\d{1,2}$/ }).first()
     await enabledDay.click()
 
-    await page.waitForTimeout(500)
+    // Ждём появления слотов времени
     const slotButton = page.locator('button').filter({ hasText: /^\d{2}:\d{2}$/ }).first()
-    await expect(slotButton).toBeVisible({ timeout: 15000 })
+    await expect(slotButton).toBeVisible({ timeout: 20000 })
     await slotButton.click()
 
-    // Fallback submit (только если нет Telegram MainButton — в E2E контексте всегда)
-    // Поддержка обеих версий: data-testid или текст кнопки
-    const submitBtn = page.getByTestId('submit-booking').or(
-      page.getByRole('button', { name: /ПОДТВЕРДИТЬ|ПЕРЕНЕСТИ ЗАПИСЬ/i })
-    ).first()
-    await expect(submitBtn).toBeVisible({ timeout: 5000 })
+    // После выбора времени появляется fallback submit (в обычном браузере без Telegram)
+    // data-testid="submit-booking" добавлен в BookingPage.tsx и задеплоен
+    const submitBtn = page.getByTestId('submit-booking')
+    await expect(submitBtn).toBeVisible({ timeout: 10000 })
     await submitBtn.click()
 
     await expect(page.getByText(/ЗАПИСЬ СОЗДАНА/i)).toBeVisible({ timeout: 10000 })

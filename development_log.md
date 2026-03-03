@@ -142,8 +142,16 @@
 
 ### Деплой команда:
 ```bash
-git pull origin main && docker-compose -f docker-compose.prod.yml up -d --build frontend
+git pull origin main && docker compose -f docker-compose.prod.yml up -d --build frontend
 ```
+(сервер использует `docker compose`, не `docker-compose`)
+
+### Root cause fallback-кнопки (commit c470851):
+- `telegram-web-app.js` загружается в `index.html` и создаёт `window.Telegram.WebApp.MainButton` ДАЖЕ в обычном браузере
+- Условие `!tg?.MainButton` всегда = false в Playwright
+- Fix: заменено на `!tg?.initData` — `initData` непустой только в реальном Telegram Mini App
+
+### Финальный статус: **5 passed / 2 skipped / 0 failed** ✅ (exit_code: 0)
 
 - Каталог 100 популярных услуг автосервиса
   - Создан backend/data/services_catalog_100.json — 100 услуг с категориями, ценами, длительностью
