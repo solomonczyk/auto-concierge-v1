@@ -542,8 +542,10 @@ export default function BookingPage() {
                         </div>
                     )}
 
-                    {/* Fallback submit when not in Telegram (E2E / direct browser) */}
-                    {selectedService && selectedTime && !tg?.MainButton && (
+                    {/* Fallback submit when not in real Telegram (E2E / direct browser).
+                        tg?.MainButton exists even in browser (telegram-web-app.js is loaded),
+                        so check initData which is only non-empty inside a real Telegram Mini App. */}
+                    {selectedService && selectedTime && !tg?.initData && (
                         <div className="pt-6">
                             <Button
                                 data-testid="submit-booking"
