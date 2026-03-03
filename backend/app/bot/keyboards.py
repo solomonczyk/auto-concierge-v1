@@ -4,14 +4,17 @@ from aiogram.types import (
 )
 from app.core.config import settings
 
+def _append_query_param(url: str, key: str, value: str) -> str:
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{key}={value}"
 
 def get_main_keyboard(telegram_id: int = None) -> ReplyKeyboardMarkup:
     """Main reply keyboard with branded buttons."""
     is_https = settings.WEBAPP_URL.startswith("https://")
     
-    webapp_url = settings.WEBAPP_URL
+    webapp_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
     if telegram_id:
-        webapp_url = f"{webapp_url}?telegram_id={telegram_id}"
+        webapp_url = _append_query_param(webapp_url, "telegram_id", str(telegram_id))
 
     buttons = []
     if is_https:
@@ -45,9 +48,10 @@ def get_main_keyboard(telegram_id: int = None) -> ReplyKeyboardMarkup:
 
 def get_appointment_keyboard(appointment_id: int, telegram_id: int = None) -> InlineKeyboardMarkup:
     """Inline keyboard for a single appointment card."""
-    webapp_url = f"{settings.WEBAPP_URL}?appointment_id={appointment_id}"
+    webapp_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
+    webapp_url = _append_query_param(webapp_url, "appointment_id", str(appointment_id))
     if telegram_id:
-        webapp_url += f"&telegram_id={telegram_id}"
+        webapp_url = _append_query_param(webapp_url, "telegram_id", str(telegram_id))
         
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -85,22 +89,23 @@ def get_consultation_result_keyboard(service_id: int = None, telegram_id: int = 
     buttons = []
     
     # Pre-selected booking button if we have a match
-    webapp_url = f"{settings.WEBAPP_URL}?service_id={service_id}" if service_id else settings.WEBAPP_URL
+    webapp_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
+    if service_id:
+        webapp_url = _append_query_param(webapp_url, "service_id", str(service_id))
     if telegram_id:
-        sep = "&" if "?" in webapp_url else "?"
-        webapp_url += f"{sep}telegram_id={telegram_id}"
+        webapp_url = _append_query_param(webapp_url, "telegram_id", str(telegram_id))
         
     buttons.append([
         KeyboardButton(
-            text="🔧 Записаться (выбрано)" if service_id else "🔧 Записаться на сервис",
+            text="✅ Записаться на рекомендованную услугу" if service_id else "🔧 Записаться на сервис",
             web_app=WebAppInfo(url=webapp_url)
         )
     ])
     
     # General buttons
-    all_svcs_url = settings.WEBAPP_URL
+    all_svcs_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
     if telegram_id:
-        all_svcs_url += f"?telegram_id={telegram_id}"
+        all_svcs_url = _append_query_param(all_svcs_url, "telegram_id", str(telegram_id))
         
     buttons.append([
         KeyboardButton(text="📂 Все услуги", web_app=WebAppInfo(url=all_svcs_url)),
@@ -117,12 +122,13 @@ def get_consultation_result_keyboard(service_id: int = None, telegram_id: int = 
 
 def get_service_suggestion_keyboard(service_id: int, telegram_id: int = None) -> InlineKeyboardMarkup:
     """Inline keyboard with a link to book a specific service."""
-    webapp_url = f"{settings.WEBAPP_URL}?service_id={service_id}"
-    all_svcs_url = settings.WEBAPP_URL
+    webapp_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
+    webapp_url = _append_query_param(webapp_url, "service_id", str(service_id))
+    all_svcs_url = _append_query_param(settings.WEBAPP_URL, "v", settings.WEBAPP_VERSION)
     
     if telegram_id:
-        webapp_url += f"&telegram_id={telegram_id}"
-        all_svcs_url += f"?telegram_id={telegram_id}"
+        webapp_url = _append_query_param(webapp_url, "telegram_id", str(telegram_id))
+        all_svcs_url = _append_query_param(all_svcs_url, "telegram_id", str(telegram_id))
         
     return InlineKeyboardMarkup(inline_keyboard=[
         [

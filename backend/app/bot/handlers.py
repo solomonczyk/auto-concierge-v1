@@ -276,7 +276,6 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
                 category=diagnosis.category,
                 urgency=diagnosis.urgency,
                 summary=diagnosis.summary,
-                clarifying_question=diagnosis.clarifying_question,
                 services=matched,
             )
             reply_text = f"{diagnosis.summary} {diagnosis.clarifying_question}"
@@ -394,7 +393,7 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
                         "status": "cancelled"
                     }
                 }
-                await redis.publish("appointments_updates", json.dumps(msg))
+                await redis.publish(f"appointments_updates:{tenant.id}", json.dumps(msg))
             except Exception as e:
                 logger.error(f"Failed to publish update: {e}")
         else:
@@ -587,7 +586,7 @@ async def web_app_data_handler(message: Message) -> None:
                         "status": appt.status.value
                     }
                 }
-                await redis.publish("appointments_updates", json.dumps(broadcast_message))
+                await redis.publish(f"appointments_updates:{tenant.id}", json.dumps(broadcast_message))
             except Exception as e:
                 logger.error(f"Failed to publish update: {e}")
 

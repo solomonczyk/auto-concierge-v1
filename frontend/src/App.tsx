@@ -18,9 +18,10 @@ import { WebSocketProvider } from '@/contexts/WebSocketContext'
 function App() {
     console.log("APP_VERSION: 1.0.3 - " + new Date().toISOString());
     const baseUrl = import.meta.env.BASE_URL
+    const wsToken = localStorage.getItem('token')
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = wsProtocol + '//' + window.location.host + baseUrl + 'api/v1/ws'
+    const wsUrl = wsProtocol + '//' + window.location.host + baseUrl + 'api/v1/ws' + (wsToken ? `?token=${encodeURIComponent(wsToken)}` : '')
     return (
         <AuthProvider>
             <Routes>

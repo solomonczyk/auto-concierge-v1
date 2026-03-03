@@ -1,3 +1,6 @@
+import logging
+from typing import Optional
+
 from app.bot.loader import bot
 from app.core.config import settings
 
@@ -12,6 +15,21 @@ class NotificationService:
             await bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to send raw message to {chat_id}: {e}")
+
+    @staticmethod
+    async def send_booking_confirmation(chat_id: int, text: str, telegram_id: Optional[int] = None):
+        """Send confirmation and switch to main menu keyboard."""
+        if not chat_id:
+            return
+        try:
+            from app.bot.keyboards import get_main_keyboard
+            tid = telegram_id or chat_id
+            await bot.send_message(
+                chat_id, text, parse_mode="HTML",
+                reply_markup=get_main_keyboard(tid)
+            )
+        except Exception as e:
+            logger.error(f"Failed to send booking confirmation to {chat_id}: {e}")
 
     @staticmethod
     async def notify_admin(text: str):

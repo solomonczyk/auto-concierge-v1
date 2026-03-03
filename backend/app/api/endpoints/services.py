@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.db.session import get_db
 from app.models.models import Service, User, UserRole
 from app.api import deps
+from app.core.config import settings
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -42,25 +43,28 @@ async def create_service(
 async def read_services(
     skip: int = 0, 
     limit: int = 100, 
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id)
 ):
-    # Try to get from context first
-    from app.core.context import tenant_id_context
-    tenant_id = tenant_id_context.get()
-    
-    # Final fallback for unauthenticated requests in production
-    if not tenant_id and settings.ENVIRONMENT == "production":
-        tenant_id = 3
-        
-    if not tenant_id:
-        # If we still don't have a tenant_id, then we can't filter
-        # Returns empty list or error? For WebApp let's return empty list to be safe
-        # but 401 was what we saw, so let's log it.
-        return []
-
     result = await db.execute(select(Service).where(Service.tenant_id == tenant_id).offset(skip).limit(limit))        
     services = result.scalars().all()
     return services
+
+@router.get("/public", response_model=List[ServiceRead])
+async def read_services_public(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    if not settings.PUBLIC_TENANT_ID:
+        raise HTTPException(status_code=503, detail="Публичный каталог услуг временно недоступен")
+    result = await db.execute(
+        select(Service)
+        .where(Service.tenant_id == settings.PUBLIC_TENANT_ID)
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 @router.put("/{service_id}", response_model=ServiceRead)
 async def update_service(

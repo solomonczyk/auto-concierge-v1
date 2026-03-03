@@ -110,22 +110,32 @@ class AICore:
         # 2. Match by category from diagnosis (if high confidence)
         if diagnosis:
             diag_cat = diagnosis.category.lower()
-            # Map Russian categories to search terms
-            cat_map = {
-                "электрика": ["электрооборудования", "диагностика"],
-                "ходовая": ["ходовой", "диагностика"],
-                "тормозная система": ["тормозных", "колодок"],
-                "двигатель": ["компьютерная", "двигателя"],
-                "то": ["масла", "фильтра"],
-                "кузов": ["кузов"],
-            }
-            
-            search_terms = cat_map.get(diag_cat, [diag_cat])
-            
-            for service in db_services:
-                svc_name = service.name.lower()
-                if any(term in svc_name for term in search_terms):
-                    matched_services.append(service)
+            ctx_lower = (context_text or "").lower()
+
+            # Special: ГРМ/ремень — нет отдельной услуги, используем "Диагностика автомобиля"
+            if "двигатель" in diag_cat and any(kw in ctx_lower for kw in ["грм", "ремн", "ремень", "распред"]):
+                for service in db_services:
+                    if "диагностика автомобиля" in service.name.lower():
+                        matched_services.append(service)
+                        break
+
+            if not matched_services:
+                # Map Russian categories to search terms
+                cat_map = {
+                    "электрика": ["электрооборудования", "диагностика"],
+                    "ходовая": ["ходовой", "диагностика"],
+                    "тормозная система": ["тормозных", "колодок"],
+                    "двигатель": ["компьютерная", "двигателя"],
+                    "то": ["масла", "фильтра"],
+                    "кузов": ["кузов"],
+                }
+
+                search_terms = cat_map.get(diag_cat, [diag_cat])
+
+                for service in db_services:
+                    svc_name = service.name.lower()
+                    if any(term in svc_name for term in search_terms):
+                        matched_services.append(service)
         
         # 3. Match by keywords in context_text (Aggressive matching)
         if not matched_services and context_text:
@@ -149,6 +159,8 @@ class AICore:
                 "трои": "двигателя", # "троит"
                 "глох": "двигателя", # "глохнет"
                 "дым": "двигателя", # "дымит"
+                "грм": "диагностика автомобиля", # ГРМ, ремень ГРМ — нет отдельной услуги
+                "ремн": "диагностика автомобиля", # ремень ГРМ и т.п.
                 "чек": ["компьютерная", "диагностика"],
                 "масл": ["масла", "фильтра"],
                 "завод": ["электрооборудования"],

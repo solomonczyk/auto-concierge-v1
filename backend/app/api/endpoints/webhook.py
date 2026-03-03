@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Request
+import secrets
+from fastapi import APIRouter, Header, HTTPException, status
 from aiogram.types import Update
 from app.services.redis_service import RedisService
 
@@ -7,8 +8,18 @@ from app.core.config import settings
 
 router = APIRouter()
 
-@router.post(f"/webhook/{settings.TELEGRAM_BOT_TOKEN}")
-async def bot_webhook(update: dict):
+@router.post("/webhook")
+async def bot_webhook(
+    update: dict,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None)
+):
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
+            x_telegram_bot_api_secret_token,
+            settings.TELEGRAM_WEBHOOK_SECRET
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
     telegram_update = Update(**update)
     
     # Idempotency Check

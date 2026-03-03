@@ -95,10 +95,6 @@ async def tenant_context_middleware(request: Request, call_next):
             # If token is invalid/expired, we just treat it as unauthenticated
             pass
             
-    # FALLBACK FOR WEBAPP/CLIENTS
-    if not tenant_id and settings.ENVIRONMENT == "production":
-        tenant_id = 3 # Default for the current production bot
-
     # Set context
     token_ctx = tenant_id_context.set(tenant_id)
     try:

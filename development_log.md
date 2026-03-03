@@ -1,0 +1,108 @@
+# Development Log
+
+## 2026-03-02
+- Investigated recurring 404 errors for `https://bt-aistudio.ru/media/posters/*.webp` after deployments
+- Identified root cause in `studio-ai-site.nginx`: media alias pointed to release directory `dist/client/media`, which is overwritten during deploys
+- Fixed nginx media location to persistent storage path `/var/www/studioaisolutions/media/`
+- Added `try_files $uri =404` and WebP MIME mapping for safer static serving
+- Added `deploy_site_safe.sh` to enforce safe static deploy flow:
+  - deploys build files without deleting media storage
+  - recreates compatibility symlink `dist/client/media -> /var/www/studioaisolutions/media`
+  - validates required poster files before/after reload
+- Applied hotfix directly on production server:
+  - updated active nginx config alias in `/etc/nginx/sites-enabled/studio-ai-site` to `/var/www/studioaisolutions/media/`
+  - reloaded nginx after successful config test
+  - synchronized media from `/var/www/studioaisolutions/dist/client/media/` to persistent media directory
+  - generated missing `.webp` poster files from existing `.jpg` files via `ffmpeg`
+  - verified previously failing poster URLs now return HTTP 200
+- Resolved video 404 errors on production for `/media/video/src/*.mp4`:
+  - found source video files in legacy deployment path `/root/{REMOTE_DIR}/site-repo/public/media/video/src/`
+  - restored videos to persistent storage `/var/www/studioaisolutions/media/video/src/`
+  - fixed ownership to web user (`1001:1001`)
+  - verified key video URLs return HTTP 200
+- Hardened deploy guard script `deploy_site_safe.sh`:
+  - validates required video files in addition to posters
+  - bootstraps media from build output (`$SOURCE_DIR/media`) when persistent media storage is empty
+- Started full prioritized audit remediation (P0 stage):
+  - Added `tenant_id` claim into JWT issuance in `backend/app/core/security.py` and login token generation
+  - Removed global production fallback `tenant_id=3` from middleware and dependency resolver
+  - Added scoped public tenant mapping via `PUBLIC_TENANT_ID` in config/deps for explicitly public endpoints only
+  - Added DB session tenant context propagation (`SET app.current_tenant_id`) and cleanup (`RESET`) in `backend/app/db/session.py`
+  - Hardened WebSocket auth: requires JWT token and subscribes to tenant-scoped Redis channel `appointments_updates:{tenant_id}`
+  - Updated Redis publishers in API/bot to tenant-scoped channel names
+  - Secured Telegram webhook endpoint: moved to `/webhook` and added optional header-secret validation (`TELEGRAM_WEBHOOK_SECRET`)
+  - Fixed public booking 500 response to avoid leaking internal error text
+  - Fixed missing `return` in appointment read endpoint
+  - Fixed frontend login payload format (`URLSearchParams` for `application/x-www-form-urlencoded`)
+  - Updated frontend WS URL to include JWT token query parameter for authenticated handshake
+  - Sanitized `history_22.02.26.md` to remove sensitive credential leaks from tracked files
+- Applied P0 fixes on production server:
+  - Uploaded patched backend/frontend files to `/root/auto-concierge-v1`
+  - Updated `.env` with `PUBLIC_TENANT_ID=3` and generated `TELEGRAM_WEBHOOK_SECRET`
+  - Rebuilt and restarted `api`, `bot`, `frontend` containers via `docker compose -f docker-compose.prod.yml up -d --build`
+  - Set Telegram webhook to `https://bt-aistudio.ru/concierge/api/v1/webhook` with secret token
+  - Verified webhook binding via Telegram `getWebhookInfo`
+  - Verified public services endpoint responds with HTTP 200 and expected payload
+- Incident fix: Telegram bot stopped responding after P0 deployment
+  - Root cause: mode conflict (`bot_main.py` uses polling while webhook was active), causing repeated `TelegramConflictError`
+  - Emergency recovery: deleted webhook (`deleteWebhook?drop_pending_updates=true`) and restarted `autoservice_bot_prod`
+  - Verified current Telegram state: webhook URL is empty, bot polling started cleanly without conflict loop
+- Telegram consultation UX refinements (user-requested):
+  - Removed clarifying-question block from AI diagnostic response message template
+  - Updated recommendation CTA to explicit direct booking label: `✅ Записаться на рекомендованную услугу`
+  - Kept immediate preselected service handoff in consultation keyboard via `service_id` WebApp URL
+  - Removed custom Telegram menu button (`🔧 Запись`) by resetting to default menu button in `bot_main.py`
+  - Deployed bot-side changes to production and restarted `autoservice_bot_prod`
+  - Verified bot processing updates after restart in polling mode
+- Fixed inconsistent service list in Telegram WebApp:
+  - Root cause hypothesis confirmed at architecture level: WebApp could inherit stale dashboard token from `localStorage`, making requests tenant-authenticated instead of public-tenant
+  - Updated `frontend/src/lib/api.ts` to disable Authorization header and 401 login redirects when route includes `/webapp`
+  - Rebuilt and redeployed frontend container to production to force new bundle
+- Fixed dashboard WebSocket disconnect after JWT schema update:
+  - Root cause: legacy JWTs without `tenant_id` were rejected by new WS auth guard
+  - Added backward-compatible fallback in `backend/app/api/endpoints/ws.py`:
+    - if `tenant_id` missing in token, resolve `sub` (username) -> `User.tenant_id` from DB
+  - Redeployed API container in production
+- Added Telegram WebApp cache-busting for stale Mini App sessions:
+  - Introduced `WEBAPP_VERSION` setting in backend config
+  - Updated all bot-generated WebApp URLs to include `v=<WEBAPP_VERSION>` query param
+  - Redeployed bot so users receive fresh Mini App URL and latest frontend bundle
+- Localized public booking errors for RU market:
+  - Replaced English error details in `appointments/public` flow with Russian user-facing messages
+  - Localized `/services/public` unavailable message
+  - Redeployed API container in production
+- Improved dashboard WebSocket resilience:
+  - Added automatic reconnect with exponential backoff in `frontend/src/contexts/WebSocketContext.tsx`
+  - Added heartbeat ping every 25 seconds to keep WS channel alive
+  - Deployed updated frontend bundle to production
+- Fixed false "slot occupied" in Mini App caused by shop mismatch:
+  - Root cause: Mini App requested slots with hardcoded `shop_id=1`, while booking validation used tenant-resolved shop
+  - Added backend endpoint `GET /api/v1/slots/public` that resolves shop by `PUBLIC_TENANT_ID` server-side
+  - Switched Mini App slot requests from `/slots/available` to `/slots/public`
+  - Deployed API and frontend to production
+- Fixed timezone mismatch in slot validation at booking submit:
+  - Root cause: selected slot validation compared timezone-aware slots against naive datetime
+  - Normalized requested datetime to UTC-aware before validation in `appointments/public`
+  - Updated comparison logic to accept equivalent UTC/naive representations safely
+  - Deployed API to production
+- Fixed 500 on public booking:
+  - Root cause: `notification_service.py` used `logging` without `import logging`
+  - Added missing import, deployed via docker cp and restart
+- WebApp booking notifications: hide admin duplicate from client
+  - Root cause: when ADMIN_CHAT_ID equals client chat (e.g. testing), client saw both "Запись подтверждена!" and "Новая запись! (WebApp)"
+  - Skip admin notification when admin chat == client chat to avoid duplicate
+- Dashboard empty: admin was in tenant 1, WebApp appointments in tenant 3
+  - Set admin user tenant_id to 3 for MVP alignment
+- Dashboard 500 on /appointments/ and /services/: SET app.current_tenant_id syntax
+  - Root cause: PostgreSQL SET does not accept bound params ($1), causing syntax error and transaction abort
+  - Fixed session.py: use literal for tenant_id (validated int from context)
+- Post-booking UX: show main menu after WebApp confirmation
+  - Added NotificationService.send_booking_confirmation() that sends message with main keyboard
+  - Replaced send_raw_message with send_booking_confirmation for client notification in appointments/public
+- AI planner: ГРМ/ремень → «Диагностика автомобиля»
+  - Added special handling for engine + ГРМ/ремень/распред in context
+  - Added car_stems «грм» и «ремн» → «диагностика автомобиля»
+- Каталог 100 популярных услуг автосервиса
+  - Создан backend/data/services_catalog_100.json — 100 услуг с категориями, ценами, длительностью
+  - Категории: двигатель, диагностика, тормоза, ходовая, шины, кондиционер, охлаждение, электрика, трансмиссия, выхлоп, кузов, стекло, мойка
+  - Скрипт seed: python -m scripts.seed_services_catalog --tenant-id 3 [--dry-run]

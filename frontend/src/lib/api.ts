@@ -8,6 +8,12 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+    const isWebApp = window.location.pathname.includes('/webapp')
+    if (isWebApp) {
+        if (config.headers) delete config.headers["Authorization"]
+        return config
+    }
+
     const token = localStorage.getItem("token");
     if (token && config.headers) {
         config.headers["Authorization"] = "Bearer " + token;
@@ -18,7 +24,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
     (response) => response,
     (error) => {
+        const isWebApp = window.location.pathname.includes('/webapp')
         if (error.response?.status === 401) {
+            if (isWebApp) return Promise.reject(error)
             // If session expired, redirect to login
             if (!window.location.pathname.includes('/login')) {
                 localStorage.removeItem('token');

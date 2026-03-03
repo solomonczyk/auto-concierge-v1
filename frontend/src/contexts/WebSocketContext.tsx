@@ -17,32 +17,66 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ url, child
     const [isConnected, setIsConnected] = useState(false);
     const [lastMessage, setLastMessage] = useState<any | null>(null);
     const ws = useRef<WebSocket | null>(null);
+    const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const heartbeatTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+    const reconnectAttempts = useRef(0);
+    const isUnmounted = useRef(false);
 
     useEffect(() => {
-        const socket = new WebSocket(url);
-        ws.current = socket;
+        isUnmounted.current = false;
 
-        socket.onopen = () => {
-            setIsConnected(true);
-            console.log('WebSocket connected');
+        const clearHeartbeat = () => {
+            if (!heartbeatTimer.current) return;
+            clearInterval(heartbeatTimer.current);
+            heartbeatTimer.current = null;
         };
 
-        socket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                setLastMessage(data);
-            } catch (e) {
-                console.error('Failed to parse WebSocket message', e);
-            }
+        const scheduleReconnect = () => {
+            if (isUnmounted.current) return;
+            const delay = Math.min(1000 * (2 ** reconnectAttempts.current), 10000);
+            reconnectAttempts.current += 1;
+            reconnectTimer.current = setTimeout(() => connect(), delay);
         };
 
-        socket.onclose = () => {
-            setIsConnected(false);
-            console.log('WebSocket disconnected');
+        const connect = () => {
+            const socket = new WebSocket(url);
+            ws.current = socket;
+
+            socket.onopen = () => {
+                setIsConnected(true);
+                reconnectAttempts.current = 0;
+                console.log('WebSocket connected');
+
+                clearHeartbeat();
+                heartbeatTimer.current = setInterval(() => {
+                    if (ws.current?.readyState === WebSocket.OPEN)
+                        ws.current.send(JSON.stringify({ type: 'ping' }));
+                }, 25000);
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    setLastMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse WebSocket message', e);
+                }
+            };
+
+            socket.onclose = () => {
+                setIsConnected(false);
+                clearHeartbeat();
+                console.log('WebSocket disconnected');
+                scheduleReconnect();
+            };
         };
 
+        connect();
         return () => {
-            socket.close();
+            isUnmounted.current = true;
+            clearHeartbeat();
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            ws.current?.close();
         };
     }, [url]);
 

@@ -19,14 +19,10 @@ async def main():
     # Ensure webhook is deleted
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Set persistent Menu Button for the web app
-    from aiogram.types import MenuButtonWebApp, WebAppInfo
-    await bot.set_chat_menu_button(
-        menu_button=MenuButtonWebApp(
-            text="🔧 Запись",
-            web_app=WebAppInfo(url=settings.WEBAPP_URL)
-        )
-    )
+    # Reset Telegram menu button to default.
+    # We use in-chat keyboards for booking actions.
+    from aiogram.types import MenuButtonDefault
+    await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
     
     logger.info("Bot is polling...")
     logger.info(f"Starting bot with WEBAPP_URL: {settings.WEBAPP_URL}")

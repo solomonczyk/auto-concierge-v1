@@ -1,5 +1,6 @@
 from typing import Annotated
-from fastapi import Depends, HTTPException, status
+import re
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,9 +65,10 @@ async def get_current_user_optional(
         return None
 
 async def get_current_tenant_id(
+    request: Request,
     current_user: Annotated[User | None, Depends(get_current_user_optional)] = None
 ) -> int:
-    # 1. Check context (set by middleware, includes production fallback)
+    # 1. Check request context set by middleware/JWT
     from app.core.context import tenant_id_context
     ctx_tenant_id = tenant_id_context.get()
     if ctx_tenant_id:
@@ -76,9 +78,18 @@ async def get_current_tenant_id(
     if current_user:
         return current_user.tenant_id
 
-    # 3. Last resort production fallback (if for some reason middleware didn't set it)
-    if settings.ENVIRONMENT == "production":
-        return 3
+    # Public endpoints can use explicit tenant mapping from environment.
+    public_paths = {
+        f"{settings.API_V1_STR}/services/",
+        f"{settings.API_V1_STR}/appointments/public",
+    }
+    request_path = request.url.path
+    is_public_appointment_read = (
+        request.method == "GET"
+        and re.fullmatch(rf"{settings.API_V1_STR}/appointments/\d+", request_path) is not None
+    )
+    if settings.PUBLIC_TENANT_ID and (request_path in public_paths or is_public_appointment_read):
+        return settings.PUBLIC_TENANT_ID
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

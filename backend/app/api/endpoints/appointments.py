@@ -148,7 +148,7 @@ async def update_appointment(
             "shop_id": appt.shop_id
         }
     }
-    await redis.publish("appointments_updates", json.dumps(message))
+    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
     
     return appt
 
@@ -314,7 +314,7 @@ async def update_appointment_status(
             "status": appt.status.value
         }
     }
-    await redis.publish("appointments_updates", json.dumps(message))
+    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
     
     return appt
 
@@ -355,6 +355,7 @@ async def read_appointment(
     
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
+    return appt
 @router.post("/public", response_model=AppointmentRead)
 async def create_public_appointment(
     payload: PublicBookingCreate,
@@ -372,19 +373,24 @@ async def create_public_appointment(
         except ValueError:
             start_time = datetime.combine(datetime.fromisoformat(payload.date).date(), datetime.min.time())
         
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=tz.utc)
+        else:
+            start_time = start_time.astimezone(tz.utc)
+
         start_time_naive = start_time.replace(tzinfo=None)
         
         # 2. Get Service
         service = await db.get(Service, payload.service_id)
         if not service or service.tenant_id != tenant_id:
-            raise HTTPException(status_code=404, detail="Service not found")
+            raise HTTPException(status_code=404, detail="Услуга не найдена")
 
         # 3. Resolve Shop
         tenant_stmt = select(Tenant).where(Tenant.id == tenant_id)
         tenant = (await db.execute(tenant_stmt)).scalar_one()
         shop = await get_tenant_shop(db, tenant)
         if not shop:
-            raise HTTPException(status_code=400, detail="Shop not configured")
+            raise HTTPException(status_code=400, detail="Сервис недоступен. Попробуйте позже")
 
         # 4. Handle Rescheduling
         existing_appt = None
@@ -395,7 +401,7 @@ async def create_public_appointment(
             result = await db.execute(stmt)
             existing_appt = result.scalar_one_or_none()
             if not existing_appt:
-                raise HTTPException(status_code=404, detail="Original appointment not found")
+                raise HTTPException(status_code=404, detail="Исходная запись не найдена")
 
         # 5. Slot Validation (if not waitlist)
         if not payload.is_waitlist:
@@ -406,10 +412,12 @@ async def create_public_appointment(
                 db=db,
                 exclude_appointment_id=payload.appointment_id
             )
-            # available_slots are naive but represent UTC if WORK_START/END are UTC-naive
-            # start_time_naive is also naive
-            if not any(slot == start_time_naive for slot in available_slots):
-                raise HTTPException(status_code=400, detail="Slot unavailable")
+            if not any(
+                slot == start_time
+                or slot.replace(tzinfo=None) == start_time_naive
+                for slot in available_slots
+            ):
+                raise HTTPException(status_code=400, detail="Выбранное время уже занято")
 
         # 6. Get/Create Client
         stmt = select(Client).where(
@@ -444,7 +452,7 @@ async def create_public_appointment(
 
         # 7. Create/Update Appointment with Collision Protection
         end_time_naive = start_time_naive + timedelta(minutes=service.duration_minutes)
-        start_time_utc = start_time_naive.replace(tzinfo=tz.utc)
+        start_time_utc = start_time
         end_time_utc = end_time_naive.replace(tzinfo=tz.utc)
 
         # Collision Check immediately before booking
@@ -456,7 +464,7 @@ async def create_public_appointment(
             if not is_locked:
                  raise HTTPException(
                     status_code=409,
-                    detail="This slot is currently being booked. Please try again."
+                    detail="Это время сейчас бронируется. Попробуйте еще раз"
                 )
             
             try:
@@ -474,7 +482,7 @@ async def create_public_appointment(
                 
                 res_collide = await db.execute(stmt_collide)
                 if res_collide.scalars().first():
-                    raise HTTPException(status_code=409, detail="Slot already taken")
+                    raise HTTPException(status_code=409, detail="Это время уже занято")
             finally:
                 if not payload.appointment_id: # Only lock for new bookings to avoid complex re-locks for now
                     await redis.delete(lock_key)
@@ -530,10 +538,10 @@ async def create_public_appointment(
                 if payload.is_waitlist:
                     msg = f"📝 <b>Лист ожидания</b>\n\n🔧 <b>Услуга:</b> {service.name}\n📅 <b>Дата:</b> {start_time_naive.strftime('%d.%m.%Y')}"
                 
-                await NotificationService.send_raw_message(payload.telegram_id, msg)
+                await NotificationService.send_booking_confirmation(payload.telegram_id, msg, payload.telegram_id)
 
-                # Notify Admin
-                if not payload.is_waitlist:
+                # Notify Admin (only if admin chat ≠ client — avoid duplicate in same chat)
+                if not payload.is_waitlist and settings.ADMIN_CHAT_ID and str(settings.ADMIN_CHAT_ID) != str(payload.telegram_id):
                     admin_msg = f"🆕 <b>Новая запись! (WebApp)</b>\n\n👤 {payload.full_name}\n🔧 {service.name}\n🕐 {time_str}"
                     await NotificationService.notify_admin(admin_msg)
             except Exception as e:
@@ -556,7 +564,7 @@ async def create_public_appointment(
                     "status": appt.status.value
                 }
             }
-            await redis.publish("appointments_updates", json.dumps(broadcast_message))
+            await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(broadcast_message))
         except Exception as e:
             logger.error(f"Redis publish error: {e}")
 
@@ -566,4 +574,4 @@ async def create_public_appointment(
         raise
     except Exception as e:
         logger.error(f"Public booking error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервиса")

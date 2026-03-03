@@ -263,14 +263,16 @@ export default function BookingPage() {
 
         const fetchData = async () => {
             try {
-                const servicesRes = await api.get('/services/');
-                setServices(servicesRes.data);
+                // Telegram Mini App must always use explicit public service feed
+                // to avoid tenant mixups from any residual auth context.
+                const publicServicesRes = await api.get('/services/public');
+                setServices(publicServicesRes.data);
 
                 if (appointmentId) {
                     try {
                         const apptRes = await api.get(`/appointments/${appointmentId}`);
                         const appt = apptRes.data;
-                        const service = servicesRes.data.find((s: Service) => s.id === appt.service_id);
+                        const service = publicServicesRes.data.find((s: Service) => s.id === appt.service_id);
 
                         if (service) {
                             setSelectedService(service);
@@ -285,7 +287,7 @@ export default function BookingPage() {
                     // Check for direct service_id link
                     const serviceId = urlParams.get('service_id');
                     if (serviceId) {
-                        const service = servicesRes.data.find((s: Service) => s.id === parseInt(serviceId));
+                        const service = publicServicesRes.data.find((s: Service) => s.id === parseInt(serviceId));
                         if (service) {
                             setSelectedService(service);
                             setStep('car'); // Proceed to car info
@@ -312,9 +314,8 @@ export default function BookingPage() {
             setSelectedTime('');
             const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-            api.get('/slots/available', {
+            api.get('/slots/public', {
                 params: {
-                    shop_id: 1, // Default for MVP
                     service_duration: selectedService.duration_minutes,
                     target_date: dateStr
                 }
