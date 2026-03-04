@@ -24,6 +24,7 @@ class Tariff(str, Enum):
     PRO = "pro"
 
 class UserRole(str, Enum):
+    SUPERADMIN = "superadmin"
     ADMIN = "admin"
     MANAGER = "manager"
     STAFF = "staff"
@@ -62,12 +63,13 @@ class Tenant(Base):
     clients: Mapped[List["Client"]] = relationship("Client", back_populates="tenant")
     services: Mapped[List["Service"]] = relationship("Service", back_populates="tenant")
     appointments: Mapped[List["Appointment"]] = relationship("Appointment", back_populates="tenant")
+    settings: Mapped[Optional["TenantSettings"]] = relationship("TenantSettings", back_populates="tenant", uselist=False)
 
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    tenant_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     username: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -141,3 +143,17 @@ class Appointment(Base):
     shop: Mapped["Shop"] = relationship("Shop", back_populates="appointments")
     client: Mapped["Client"] = relationship("Client", back_populates="appointments")
     service: Mapped["Service"] = relationship("Service", back_populates="appointments")
+
+
+class TenantSettings(Base):
+    """Per-tenant working hours and slot configuration."""
+    __tablename__ = "tenant_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), unique=True, nullable=False, index=True)
+    work_start: Mapped[int] = mapped_column(Integer, default=9)    # hour 0-23
+    work_end: Mapped[int] = mapped_column(Integer, default=18)     # hour 0-23
+    slot_duration: Mapped[int] = mapped_column(Integer, default=30) # minutes
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
+
+    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="settings")

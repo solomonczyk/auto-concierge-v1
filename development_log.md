@@ -266,3 +266,42 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 **Исправления в `backend/app/services/ai_core.py`:**
 1. **system_prompt** расширен: добавлены явные правила категоризации с примерами (стеклоочиститель/дворники = "Электрика", не "Кузов")
 2. **`car_stems`** дополнен стемами: `очист`, `дворн`, `омыв`, `стеклоочист`, `форсун`, `генер`, `старт`, `рихт` → маппинг на нужные категории услуг
+
+---
+
+### 2026-03-04 — Feature: SaaS Provisioning — SUPERADMIN + Tenant Creation API
+
+**Цель:** SUPERADMIN создаёт новый автосервис через API → автоматически создаётся Tenant (slug) + ADMIN пользователь + TenantSettings + базовый каталог услуг.
+
+**Изменения:**
+
+**`backend/app/models/models.py`:**
+- `UserRole` enum: добавлено значение `SUPERADMIN = "superadmin"`
+- `User.tenant_id`: изменено с `nullable=False` на `nullable=True` — SUPERADMIN не привязан к тенанту
+- Новая модель `TenantSettings`: per-tenant настройки `work_start`, `work_end`, `slot_duration`, `timezone`
+- `Tenant.settings`: добавлена обратная связь `uselist=False` к `TenantSettings`
+
+**`backend/app/api/deps.py`:**
+- Добавлена dependency `require_superadmin` — проверяет `role == SUPERADMIN`, иначе 403
+
+**`backend/app/api/endpoints/tenants.py`** (новый файл):
+- `POST /api/v1/tenants` — SUPERADMIN only
+- Валидация slug: regex `[a-z0-9][a-z0-9-]{1,48}[a-z0-9]`, 3–50 символов, 422 при нарушении
+- Проверка уникальности slug и admin_username (409 если занято)
+- Создание: `Tenant` → `User(role=ADMIN)` → `TenantSettings` → 10 дефолтных услуг
+- Структурированный лог `[Provisioning] Tenant created: id=... slug=...`
+- Ответ 201: `{ tenant_id, slug, dashboard_url, admin_username, services_seeded }`
+
+**`backend/app/api/api.py`:**
+- Подключён `tenants.router` с `prefix="/tenants"`, `tags=["tenants"]`
+
+**`backend/scripts/create_superadmin.py`** (новый файл):
+- CLI-скрипт для создания SUPERADMIN (без tenant_id)
+- Запуск: `docker exec -it autoservice_api_prod python scripts/create_superadmin.py --username root --password strongpassword`
+
+**`backend/alembic/versions/e1a2b3c4d5e6_add_superadmin_role_nullable_tenant_tenant_settings.py`** (новая миграция):
+- `ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'SUPERADMIN'`
+- `ALTER TABLE users ALTER COLUMN tenant_id DROP NOT NULL`
+- `CREATE TABLE tenant_settings` с полями work_start, work_end, slot_duration, timezone
+
+**Статус:** Код написан, миграция создана. Требует запущенного Docker для `alembic upgrade head` и создания первого SUPERADMIN.

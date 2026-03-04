@@ -1,9 +1,10 @@
 from fastapi import APIRouter
-from app.api.endpoints import shops, services, appointments, slots, webhook, ws, login, clients, public
+from app.api.endpoints import shops, services, appointments, slots, webhook, ws, login, clients, public, tenants
 
 api_router = APIRouter()
 
 api_router.include_router(login.router, tags=["login"])
+api_router.include_router(tenants.router, prefix="/tenants", tags=["tenants"])
 
 api_router.include_router(shops.router, prefix="/shops", tags=["shops"])
 api_router.include_router(services.router, prefix="/services", tags=["services"])
