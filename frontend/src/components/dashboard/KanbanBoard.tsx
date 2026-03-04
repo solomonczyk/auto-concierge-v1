@@ -13,7 +13,7 @@ const COLUMNS = [
     { id: 'new', title: 'Новая' },
     { id: 'confirmed', title: 'Подтверждена' },
     { id: 'in_progress', title: 'В работе' },
-    { id: 'done', title: 'Готова' },
+    { id: 'completed', title: 'Готова' },
 ];
 
 function DraggableCard({ appointment, onEdit, onDragStart }: {
@@ -140,7 +140,7 @@ export default function KanbanBoard() {
             new: [],
             confirmed: [],
             in_progress: [],
-            done: [],
+            completed: [],
             cancelled: []
         };
         appointments.forEach(appt => {
