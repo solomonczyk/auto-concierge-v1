@@ -4,9 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
+from app.core.rate_limit import limiter
 from app.api import deps
 from app.core import security
 from app.core.config import settings
@@ -14,7 +12,6 @@ from app.db.session import get_db
 from app.models.models import User
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/login/access-token")
 @limiter.limit("5/minute")  # Rate limit login attempts

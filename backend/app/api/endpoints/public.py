@@ -8,13 +8,14 @@ from zoneinfo import ZoneInfo
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.slots import get_available_slots
 from app.core.tenant_resolver import get_tenant_id_by_slug
 from app.db.session import get_db
@@ -106,7 +107,9 @@ class AppointmentRead(BaseModel):
 # ─── GET /services/public ─────────────────────────────────────────────────────
 
 @router.get("/services/public", response_model=List[ServiceRead])
+@limiter.limit("60/minute")
 async def get_public_services(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     tenant_id: int = Depends(get_tenant_id_by_slug),
@@ -124,7 +127,9 @@ async def get_public_services(
 # ─── GET /slots/public ────────────────────────────────────────────────────────
 
 @router.get("/slots/public", response_model=List[datetime])
+@limiter.limit("30/minute")
 async def get_public_slots(
+    request: Request,
     service_duration: int,
     target_date: date = Query(..., description="Date (YYYY-MM-DD)"),
     tenant_id: int = Depends(get_tenant_id_by_slug),
@@ -145,7 +150,9 @@ async def get_public_slots(
 # ─── POST /appointments/public ────────────────────────────────────────────────
 
 @router.post("/appointments/public", response_model=AppointmentRead)
+@limiter.limit("10/minute")
 async def create_public_appointment(
+    request: Request,
     payload: PublicBookingCreate,
     tenant_id: int = Depends(get_tenant_id_by_slug),
     db: AsyncSession = Depends(get_db),
@@ -363,7 +370,9 @@ async def create_public_appointment(
 # ─── GET /clients/public ──────────────────────────────────────────────────────
 
 @router.get("/clients/public", response_model=ClientCarInfo)
+@limiter.limit("30/minute")
 async def get_public_client_car_info(
+    request: Request,
     telegram_id: int = Query(...),
     tenant_id: int = Depends(get_tenant_id_by_slug),
     db: AsyncSession = Depends(get_db),
