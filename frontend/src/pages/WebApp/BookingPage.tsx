@@ -225,6 +225,8 @@ export default function BookingPage() {
     const [carMake, setCarMake] = useState('');
     const [carYear, setCarYear] = useState('');
     const [vin, setVin] = useState('');
+    // Returning client: already has car data — skip car step
+    const [returningClient, setReturningClient] = useState(false);
     const [selectedDate, setSelectedDate] = useState<Date>(() => {
         const now = new Date();
         if (now.getHours() >= 18) {
@@ -274,6 +276,23 @@ export default function BookingPage() {
                 const publicServicesRes = await api.get('/services/public');
                 setServices(publicServicesRes.data);
 
+                // Check if returning client (has car data saved)
+                const telegramId = tg?.initDataUnsafe?.user?.id
+                if (telegramId) {
+                    try {
+                        const clientRes = await api.get(`/clients/public?telegram_id=${telegramId}`)
+                        const clientData = clientRes.data
+                        if (clientData?.car_make) {
+                            setCarMake(clientData.car_make)
+                            setCarYear(clientData.car_year ? String(clientData.car_year) : '')
+                            setVin(clientData.vin || '')
+                            setReturningClient(true)
+                        }
+                    } catch {
+                        // New client — car step will be shown as usual
+                    }
+                }
+
                 if (appointmentId) {
                     try {
                         const apptRes = await api.get(`/appointments/${appointmentId}`);
@@ -296,7 +315,7 @@ export default function BookingPage() {
                         const service = publicServicesRes.data.find((s: Service) => s.id === parseInt(serviceId));
                         if (service) {
                             setSelectedService(service);
-                            setStep('car'); // Proceed to car info
+                            // step will be set after returningClient is known — deferred below
                         }
                     }
                 }
@@ -430,7 +449,7 @@ export default function BookingPage() {
         return (
             <div className="p-4 pb-24 bg-background min-h-screen text-foreground space-y-6 animate-in fade-in duration-500">
                 <div className="flex items-center gap-2 mb-2">
-                    <Button variant="ghost" size="icon" onClick={() => setStep('car')} className="-ml-2">
+                    <Button variant="ghost" size="icon" onClick={() => setStep(returningClient ? 'service' : 'car')} className="-ml-2">
                         <ChevronLeft className="w-6 h-6" />
                     </Button>
                     <h1 className="text-xl font-bold">Детали записи</h1>
@@ -616,7 +635,7 @@ export default function BookingPage() {
                         key={service.id}
                         data-testid="service-card"
                         className="overflow-hidden border-none bg-accent/30 hover:bg-accent/50 transition-all active:scale-[0.98] cursor-pointer"
-                        onClick={() => { setSelectedService(service); setStep('car'); }}
+                        onClick={() => { setSelectedService(service); setStep(returningClient ? 'datetime' : 'car'); }}
                     >
                         <CardHeader className="p-4 pb-1">
                             <CardTitle className="text-lg flex justify-between items-start">
