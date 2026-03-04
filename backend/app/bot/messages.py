@@ -263,10 +263,9 @@ def _diagnostic_result_msg(category: str, urgency: str, summary: str, services: 
 
     service_lines = ""
     if services:
-        service_lines = "\n\n🔧 <b>Рекомендуемые услуги:</b>\n"
-        for svc in services[:3]:
-            price = f" — {svc.base_price} ₽" if hasattr(svc, "base_price") and svc.base_price else ""
-            service_lines += f"• {html.quote(svc.name)}{price}\n"
+        svc = services[0]
+        price = f" — {svc.base_price} ₽" if hasattr(svc, "base_price") and svc.base_price else ""
+        service_lines = f"\n\n🔧 <b>Рекомендуемая услуга:</b>\n• {html.quote(svc.name)}{price}\n"
 
     return (
         f"━━━━━━━━━━━━━━━━━━━━\n"
