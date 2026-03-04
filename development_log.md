@@ -216,6 +216,44 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 
 ---
 
+### 2026-03-04 — feat: Multi-tenant SaaS с slug-резолвингом тенанта
+
+**Задача:** Переход от хардкод `PUBLIC_TENANT_ID` к динамическому резолвингу тенанта по slug в URL. Каждый автосервис получает адрес `/concierge/{slug}` и изолированный API `/api/v1/{slug}/...`
+
+**Изменения:**
+
+**Backend:**
+- `backend/app/models/models.py` — добавлено поле `slug: Optional[str]` в модель `Tenant`
+- `backend/app/core/tenant_resolver.py` — новый файл, FastAPI dependency `get_tenant_id_by_slug(slug: Path) -> int`
+- `backend/app/api/endpoints/public.py` — новый файл, все 4 публичных endpoint под slug:
+  - `GET /{slug}/services/public` — каталог услуг тенанта
+  - `GET /{slug}/slots/public` — доступные слоты
+  - `POST /{slug}/appointments/public` — создание записи (полная логика из appointments.py)
+  - `GET /{slug}/clients/public` — инфо об авто клиента
+- `backend/app/api/api.py` — подключён `slug_router` с prefix `/{slug}`
+- `backend/app/core/config.py` — `PUBLIC_TENANT_ID` помечен deprecated (комментарий)
+- `backend/app/api/deps.py` — удалён `public_paths` whitelist и `is_public_appointment_read` fallback
+- `backend/app/bot/handlers.py` — `tenant_id_for_services = tenant.id` (без fallback)
+- `backend/app/api/endpoints/services.py`, `slots.py`, `clients.py` — старые `/public` endpoint-ы возвращают 410 Gone
+- `backend/alembic/versions/f4d3a52dba51_add_tenant_slug.py` — новая миграция
+
+**Frontend:**
+- `frontend/src/App.tsx` — добавлены маршруты `/concierge/:slug` и `/:slug` (backward compat `/webapp` сохранён)
+- `frontend/src/pages/WebApp/BookingPage.tsx` — slug извлекается через `useParams`, все public API calls используют `${apiBase}` (где `apiBase = /${slug}`)
+- `frontend/src/lib/api.ts` — обновлена логика определения WebApp-режима (axios interceptor)
+
+**Деплой:**
+- Миграция применена на проде, slug `auto-concierge` назначен тенанту id=3
+- `WEBAPP_URL` обновлён в `.env` → `https://bt-aistudio.ru/concierge/auto-concierge`
+- Пересобраны контейнеры: `api`, `frontend`, `bot`
+- Проверка: `GET https://bt-aistudio.ru/concierge/api/v1/auto-concierge/services/public` → 200 OK
+
+**Коммиты:**
+- `973cc2d` — feat: multi-tenant SaaS — tenant resolved by slug in URL
+- `c53102f` — fix: apiBase slug path and WebApp auth detection in axios interceptor
+
+---
+
 ### 2026-03-04 — Fix: некорректный выбор услуги при ИИ-диагностике (ai_core.py)
 
 **Проблема:** При фразе "не работает очиститель лобового стекла" бот предлагал "Полировка кузова" и "Керамическое покрытие" — несвязанные услуги.
