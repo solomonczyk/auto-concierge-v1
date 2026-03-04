@@ -314,3 +314,26 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 - `GET /shops` як ADMIN → 200 ✅
 
 **Додатково:** `SITE_URL=https://bt-aistudio.ru` додано в `.env` на проді. `dashboard_url` тепер коректний: `https://bt-aistudio.ru/concierge/{slug}`.
+
+---
+
+### 2026-03-04 — Operational Readiness: PostgreSQL Backup по расписанию
+
+**Реализовано:**
+- Папка `/var/backups/auto-concierge` (chmod 700, вне Docker volume)
+- Первый дамп: `autoservice_2026-03-04.sql.gz` (7.5K, gzip integrity OK)
+- Cron 03:00 — `pg_dump | gzip > autoservice_$(date +%F).sql.gz`
+- Cron 03:30 — `find ... -mtime +7 -delete` (хранение 7 дней)
+- `scripts/setup_backup_cron.sh` — скрипт установки cron
+- `scripts/run_backup_now.sh` — ручной запуск дампа
+
+**Аудит Operational Readiness:**
+| Пункт | Статус |
+|---|---|
+| Логирование ошибок (Sentry) | ❌ Нет |
+| Бэкапы PostgreSQL | ✅ Готово |
+| Health monitoring | ⚠️ `/health` есть, внешний мониторинг нет |
+| Brute force на login | ✅ slowapi 5/min |
+| Rate limit публичных endpoints | ❌ Нет |
+
+**Следующий шаг:** Rate limit на публичные endpoints.
