@@ -221,8 +221,9 @@ export default function BookingPage() {
     // Falls back to last path segment for cases where router isn't wrapping us
     const { slug: routeSlug } = useParams<{ slug?: string }>()
     const slug = routeSlug ?? window.location.pathname.split('/').filter(Boolean).pop() ?? ''
-    // All public API calls go through /{slug}/... so each tenant is fully isolated
-    const apiBase = slug ? `/api/v1/${slug}` : `/api/v1`
+    // axios baseURL is already /concierge/api/v1, so we only append the slug segment
+    // Final request: /concierge/api/v1/{slug}/services/public → nginx → backend /api/v1/{slug}/...
+    const apiBase = slug ? `/${slug}` : ''
 
     const [services, setServices] = useState<Service[]>([]);
     const [loading, setLoading] = useState(true);
