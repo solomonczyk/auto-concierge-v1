@@ -28,3 +28,6 @@ pytest-asyncio>=0.21.0
 # Security
 python-dotenv>=1.0.0
 slowapi>=0.1.9
+
+# Scheduler
+apscheduler>=3.10.0

@@ -12,21 +12,55 @@ from app.core.config import settings
 from app.bot.loader import bot, dp
 from app.bot.handlers import router as bot_router
 
+
+def _start_scheduler():
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from zoneinfo import ZoneInfo
+    from app.services.reminder_service import send_evening_reminders, send_morning_reminders
+
+    tz = ZoneInfo(settings.SHOP_TIMEZONE)
+    scheduler = AsyncIOScheduler(timezone=tz)
+
+    # 20:00 — напоминание на завтра
+    scheduler.add_job(
+        send_evening_reminders,
+        CronTrigger(hour=20, minute=0, timezone=tz),
+        id="evening_reminders",
+        replace_existing=True,
+    )
+
+    # 08:00 — напоминание на сегодня
+    scheduler.add_job(
+        send_morning_reminders,
+        CronTrigger(hour=8, minute=0, timezone=tz),
+        id="morning_reminders",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    logger.info(f"Reminder scheduler started (tz={settings.SHOP_TIMEZONE}): 08:00 & 20:00")
+    return scheduler
+
+
 async def main():
     logger.info("Starting bot standalone...")
     dp.include_router(bot_router)
-    
-    # Ensure webhook is deleted
+
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Reset Telegram menu button to default.
-    # We use in-chat keyboards for booking actions.
     from aiogram.types import MenuButtonDefault
     await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-    
-    logger.info("Bot is polling...")
-    logger.info(f"Starting bot with WEBAPP_URL: {settings.WEBAPP_URL}")
-    await dp.start_polling(bot)
+
+    scheduler = _start_scheduler()
+
+    logger.info(f"Bot is polling... WEBAPP_URL: {settings.WEBAPP_URL}")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
