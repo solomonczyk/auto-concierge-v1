@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     
     WEBAPP_URL: str = "http://localhost:5173/webapp"
     WEBAPP_VERSION: str = "2026-03-03-1"
+    # Base site URL used to build tenant dashboard links (no trailing slash)
+    SITE_URL: str = "http://localhost:5173"
     
     @property
     def GIGACHAT_CREDENTIALS(self) -> Optional[str]:

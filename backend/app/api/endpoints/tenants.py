@@ -164,7 +164,7 @@ async def create_tenant(
 
     await db.commit()
 
-    dashboard_url = f"{settings.WEBAPP_URL}/concierge/{payload.slug}"
+    dashboard_url = f"{settings.SITE_URL}/concierge/{payload.slug}"
 
     logger.info(
         "[Provisioning] Tenant created: id=%s slug=%s admin=%s services=%s",
