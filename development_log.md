@@ -337,3 +337,31 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 | Rate limit публичных endpoints | ❌ Нет |
 
 **Следующий шаг:** Rate limit на публичные endpoints.
+
+---
+
+### 2026-03-04 — Operational Readiness: Rate Limiting на публичных endpoints
+
+**Реализовано:**
+- `backend/app/core/rate_limit.py` — shared limiter (единое хранилище для всех модулей)
+- `main.py` и `login.py` переведены на shared limiter (убраны дублирующие экземпляры)
+- Лимиты на публичных endpoints:
+
+| Endpoint | Лимит | Обоснование |
+|---|---|---|
+| `GET /{slug}/services/public` | 60/min | лёгкий read |
+| `GET /{slug}/slots/public` | 30/min | DB-запрос |
+| `POST /{slug}/appointments/public` | 10/min | write, спам-риск |
+| `GET /{slug}/clients/public` | 30/min | lookup |
+| `POST /login/access-token` | 5/min | brute-force (уже было) |
+
+**Тест на проде:** 13 запросов к `/appointments/public` → `{200:1, 400:10, 429:2}` ✅
+
+**Аудит Operational Readiness (итог):**
+| Пункт | Статус |
+|---|---|
+| Логирование ошибок (Sentry) | ❌ Нет |
+| Бэкапы PostgreSQL | ✅ Готово |
+| Health monitoring | ⚠️ `/health` есть, внешний мониторинг нет |
+| Brute force на login | ✅ slowapi 5/min |
+| Rate limit публичных endpoints | ✅ Готово |
