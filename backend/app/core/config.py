@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 
     # Environment mode
     ENVIRONMENT: str = "development"
-    PUBLIC_TENANT_ID: Optional[int] = None
+    # PUBLIC_TENANT_ID is deprecated — tenant is now resolved via slug in the URL
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
     # Shop timezone for display in notifications (e.g. Europe/Moscow)

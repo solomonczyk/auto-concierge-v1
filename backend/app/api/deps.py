@@ -1,5 +1,4 @@
 from typing import Annotated
-import re
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -77,19 +76,6 @@ async def get_current_tenant_id(
     # 2. Check user as backup
     if current_user:
         return current_user.tenant_id
-
-    # Public endpoints can use explicit tenant mapping from environment.
-    public_paths = {
-        f"{settings.API_V1_STR}/services/",
-        f"{settings.API_V1_STR}/appointments/public",
-    }
-    request_path = request.url.path
-    is_public_appointment_read = (
-        request.method == "GET"
-        and re.fullmatch(rf"{settings.API_V1_STR}/appointments/\d+", request_path) is not None
-    )
-    if settings.PUBLIC_TENANT_ID and (request_path in public_paths or is_public_appointment_read):
-        return settings.PUBLIC_TENANT_ID
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

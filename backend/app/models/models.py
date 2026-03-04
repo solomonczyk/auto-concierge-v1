@@ -44,6 +44,7 @@ class Tenant(Base):
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    slug: Mapped[Optional[str]] = mapped_column(String(100), unique=True, index=True, nullable=True)
     # Stored encrypted
     encrypted_bot_token: Mapped[Optional[str]] = mapped_column(String(500), unique=True, nullable=True)
     # Hashed for fast lookups

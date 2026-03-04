@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -216,6 +217,13 @@ function CarInfoStep({
 }
 
 export default function BookingPage() {
+    // Resolve slug from react-router params (/:slug or /concierge/:slug)
+    // Falls back to last path segment for cases where router isn't wrapping us
+    const { slug: routeSlug } = useParams<{ slug?: string }>()
+    const slug = routeSlug ?? window.location.pathname.split('/').filter(Boolean).pop() ?? ''
+    // All public API calls go through /{slug}/... so each tenant is fully isolated
+    const apiBase = slug ? `/api/v1/${slug}` : `/api/v1`
+
     const [services, setServices] = useState<Service[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
@@ -271,16 +279,14 @@ export default function BookingPage() {
 
         const fetchData = async () => {
             try {
-                // Telegram Mini App must always use explicit public service feed
-                // to avoid tenant mixups from any residual auth context.
-                const publicServicesRes = await api.get('/services/public');
+                const publicServicesRes = await api.get(`${apiBase}/services/public`);
                 setServices(publicServicesRes.data);
 
                 // Check if returning client (has car data saved)
                 const telegramId = tg?.initDataUnsafe?.user?.id
                 if (telegramId) {
                     try {
-                        const clientRes = await api.get(`/clients/public?telegram_id=${telegramId}`)
+                        const clientRes = await api.get(`${apiBase}/clients/public?telegram_id=${telegramId}`)
                         const clientData = clientRes.data
                         if (clientData?.car_make) {
                             setCarMake(clientData.car_make)
@@ -339,7 +345,7 @@ export default function BookingPage() {
             setSelectedTime('');
             const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
-            api.get('/slots/public', {
+            api.get(`${apiBase}/slots/public`, {
                 params: {
                     service_duration: selectedService.duration_minutes,
                     target_date: dateStr
@@ -388,7 +394,7 @@ export default function BookingPage() {
             setLoading(true);
             tg?.MainButton?.showProgress();
 
-            const response = await api.post('/appointments/public', data);
+            const response = await api.post(`${apiBase}/appointments/public`, data);
             console.log("Booking response:", response.data);
 
             setStep('success');

@@ -51,20 +51,12 @@ async def read_services(
     return services
 
 @router.get("/public", response_model=List[ServiceRead])
-async def read_services_public(
-    skip: int = 0,
-    limit: int = 100,
-    db: AsyncSession = Depends(get_db)
-):
-    if not settings.PUBLIC_TENANT_ID:
-        raise HTTPException(status_code=503, detail="Публичный каталог услуг временно недоступен")
-    result = await db.execute(
-        select(Service)
-        .where(Service.tenant_id == settings.PUBLIC_TENANT_ID)
-        .offset(skip)
-        .limit(limit)
+async def read_services_public():
+    """Deprecated: use /{slug}/services/public instead."""
+    raise HTTPException(
+        status_code=410,
+        detail="Этот endpoint устарел. Используйте /api/v1/{slug}/services/public",
     )
-    return result.scalars().all()
 
 @router.put("/{service_id}", response_model=ServiceRead)
 async def update_service(

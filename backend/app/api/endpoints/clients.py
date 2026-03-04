@@ -6,7 +6,6 @@ from sqlalchemy import select, and_
 from app.db.session import get_db
 from app.api import deps
 from app.models.models import Client, User, UserRole
-from app.core.config import settings
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -31,25 +30,12 @@ class ClientCarInfo(BaseModel):
         from_attributes = True
 
 @router.get("/public", response_model=ClientCarInfo)
-async def get_client_car_info(
-    telegram_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
-):
-    """Public endpoint: returns car info for a returning client by telegram_id."""
-    tenant_id = settings.PUBLIC_TENANT_ID
-    if not tenant_id:
-        raise HTTPException(status_code=503, detail="Service unavailable")
-
-    stmt = select(Client).where(
-        and_(Client.telegram_id == telegram_id, Client.tenant_id == tenant_id)
+async def get_client_car_info():
+    """Deprecated: use /{slug}/clients/public instead."""
+    raise HTTPException(
+        status_code=410,
+        detail="Этот endpoint устарел. Используйте /api/v1/{slug}/clients/public",
     )
-    result = await db.execute(stmt)
-    client = result.scalar_one_or_none()
-
-    if not client or not client.car_make:
-        raise HTTPException(status_code=404, detail="Client not found or no car data")
-
-    return client
 
 @router.get("/", response_model=List[ClientOut])
 async def read_clients(

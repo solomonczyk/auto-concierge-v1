@@ -258,8 +258,7 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
     try:
         async with async_session_local() as db:
             tenant = await get_or_create_tenant(db)
-            # Use PUBLIC_TENANT_ID for services so recommendations match WebApp catalog
-            tenant_id_for_services = settings.PUBLIC_TENANT_ID if settings.PUBLIC_TENANT_ID else tenant.id
+            tenant_id_for_services = tenant.id
             stmt = select(Service).where(Service.tenant_id == tenant_id_for_services)
             result = await db.execute(stmt)
             db_services = result.scalars().all()

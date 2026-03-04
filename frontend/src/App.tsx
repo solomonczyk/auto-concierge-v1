@@ -26,7 +26,11 @@ function App() {
         <AuthProvider>
             <Routes>
                 <Route path="/login" element={<LoginPage />} />
+                {/* Legacy path — kept for backward compatibility */}
                 <Route path="/webapp" element={<BookingPage />} />
+                {/* Slug-based multi-tenant path: /concierge/{slug} or /{slug} */}
+                <Route path="/concierge/:slug" element={<BookingPage />} />
+                <Route path="/:slug" element={<BookingPage />} />
 
                 <Route element={<RequireAuth />}>
                     <Route path="/" element={
