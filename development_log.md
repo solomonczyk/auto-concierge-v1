@@ -158,6 +158,64 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
   - Категории: двигатель, диагностика, тормоза, ходовая, шины, кондиционер, охлаждение, электрика, трансмиссия, выхлоп, кузов, стекло, мойка
   - Скрипт seed: python -m scripts.seed_services_catalog --tenant-id 3 [--dry-run]
 
+---
+
+## 2026-03-04 — Рабочий день. Итог.
+
+### Выполнено за день:
+
+**1. Fix: некорректная категория при ИИ-диагностике**
+- Симптом: "очиститель лобового стекла" → категория Кузов → полировка кузова
+- Исправлен system_prompt: добавлены явные правила категоризации с примерами
+- Добавлены стемы в `car_stems`: очист/дворн/омыв/форсун/генер/старт/рихт
+
+**2. Refactor: AI выбирает одну услугу из реального каталога**
+- Добавлен `recommended_service` в `DiagnosticResult`
+- GigaChat теперь видит весь список услуг и выбирает одну по точному имени
+- `planner()` переписан: exact name match → category fallback → keyword fallback → 1 услуга
+- `handlers.py`: передаётся `db_services` в `classify_and_diagnose`
+
+**3. Fix: сообщение показывало несколько услуг**
+- `messages.py`: "Рекомендуемые услуги" → "Рекомендуемая услуга", показывается только `services[0]`
+
+**4. Fix: Kanban — карточки не переносились в "Готова"**
+- Root cause: колонка `id: 'done'` отправляла статус `DONE`, бэкенд ожидал `completed`
+- Исправлено: `done` → `completed` в `COLUMNS` и в группировке карточек
+
+**5. Feat: планировщик напоминаний (APScheduler)**
+- Добавлен `apscheduler>=3.10.0` в requirements
+- Создан `reminder_service.py`: `send_morning_reminders()` (08:00) и `send_evening_reminders()` (20:00)
+- `bot_main.py`: планировщик стартует вместе с ботом, таймзона из `SHOP_TIMEZONE`
+
+**6. Feat: пропуск шага "Данные авто" для повторных клиентов**
+- Backend: новый endpoint `GET /api/v1/clients/public?telegram_id=` — возвращает данные авто
+- Frontend: при загрузке страницы запрашивает данные клиента; если `car_make` есть — `returningClient=true`, шаг `car` пропускается
+
+**7. Docs: созданы два руководства**
+- `docs/demo-guide-client.md` — пошаговый гайд для клиентов автосервиса
+- `docs/demo-guide-technical.md` — полный технический справочник: архитектура, стек, API, деплой, env, ограничения
+
+### Деплои за день:
+- 5 деплоев бэкенда (bot + api)
+- 2 деплоя фронтенда
+- Все деплои через SSH → git pull → docker compose up --build
+
+### На чём споткнулись:
+- IP сервера в `.env.example` (188.120.117.99) не совпадал с реальным (109.172.114.149) — потеряли время на SSH
+- `done` vs `completed` в Kanban — несоответствие фронт/бэк, клиент не мог перенести карточку
+
+### Коммиты дня:
+- `c9c0acf` — fix: AI категоризация дворников
+- `504cbab` — fix: narrow cat_map, limit to top-2
+- `6c2ea1e` — refactor: AI selects ONE service by exact name
+- `5c1cc89` — fix: single recommended service in message
+- `b6c3aac` — fix: kanban done → completed
+- `287fea6` — feat: reminder scheduler 08:00 & 20:00
+- `6ac6758` — feat: skip car step for returning clients
+- `9e01507` — docs: client guide + technical reference
+
+---
+
 ### 2026-03-04 — Fix: некорректный выбор услуги при ИИ-диагностике (ai_core.py)
 
 **Проблема:** При фразе "не работает очиститель лобового стекла" бот предлагал "Полировка кузова" и "Керамическое покрытие" — несвязанные услуги.
