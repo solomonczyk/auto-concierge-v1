@@ -304,4 +304,13 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 - `ALTER TABLE users ALTER COLUMN tenant_id DROP NOT NULL`
 - `CREATE TABLE tenant_settings` с полями work_start, work_end, slot_duration, timezone
 
-**Статус:** Код написан, миграция создана. Требует запущенного Docker для `alembic upgrade head` и создания первого SUPERADMIN.
+**Статус:** Повністю задеплоєно та перевірено на проді (bt-aistudio.ru, 2026-03-04).
+
+**Результати тестування:**
+- SUPERADMIN `root` (id=5): `role=superadmin`, `tenant_id=NULL` ✅
+- `POST /api/v1/tenants` → 201, `tenant_id=5`, `services_seeded=10` ✅
+- `GET /test-auto-001/services/public` → 200, 10 послуг ✅
+- ADMIN `test_admin_001` login: `role=admin`, `tenant_id=5` ✅
+- `GET /shops` як ADMIN → 200 ✅
+
+**Додатково:** `SITE_URL=https://bt-aistudio.ru` додано в `.env` на проді. `dashboard_url` тепер коректний: `https://bt-aistudio.ru/concierge/{slug}`.
