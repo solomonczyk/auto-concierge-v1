@@ -136,12 +136,12 @@ class AICore:
                         break
 
             if not matched_services:
-                # Map Russian categories to search terms
+                # Map Russian categories to SPECIFIC search terms only (no broad "диагностика")
                 cat_map = {
-                    "электрика": ["электрооборудования", "диагностика"],
-                    "ходовая": ["ходовой", "диагностика"],
+                    "электрика": ["электрооборудования"],
+                    "ходовая": ["ходовой"],
                     "тормозная система": ["тормозных", "колодок"],
-                    "двигатель": ["компьютерная", "двигателя"],
+                    "двигатель": ["компьютерная диагностика", "двигателя"],
                     "то": ["масла", "фильтра"],
                     "кузов": ["кузов"],
                 }
@@ -152,6 +152,18 @@ class AICore:
                     svc_name = service.name.lower()
                     if any(term in svc_name for term in search_terms):
                         matched_services.append(service)
+
+                # If still nothing — use general "Диагностика автомобиля" as safe fallback
+                if not matched_services:
+                    for service in db_services:
+                        if "диагностика автомобиля" in service.name.lower():
+                            matched_services.append(service)
+                            break
+
+            # Limit to top 2 most specific services to avoid confusion
+            if matched_services:
+                matched_services.sort(key=lambda s: len(s.name), reverse=True)
+                matched_services = matched_services[:2]
         
         # 3. Match by keywords in context_text (Aggressive matching)
         if not matched_services and context_text:
