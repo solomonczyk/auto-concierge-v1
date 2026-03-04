@@ -264,8 +264,8 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
             result = await db.execute(stmt)
             db_services = result.scalars().all()
 
-        # Run AI classification + diagnosis, passing conversation history
-        diagnosis = await ai_core.classify_and_diagnose(user_text, history)
+        # Run AI classification + diagnosis, passing conversation history and real service catalog
+        diagnosis = await ai_core.classify_and_diagnose(user_text, history, db_services=db_services)
         matched = []
         reply_text = ""
 
