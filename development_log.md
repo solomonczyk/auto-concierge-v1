@@ -340,6 +340,20 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 
 ---
 
+### 2026-03-05 — Operational Readiness: Deep Health Check + UptimeRobot
+
+**Проблема:** `GET https://bt-aistudio.ru/health` → 404 (Astro-сайт перехватывал запрос, `location /health` был в блоке `nip.io`, а не `bt-aistudio.ru`).
+
+**Решения:**
+- `/health` в FastAPI расширен до deep check: `SELECT 1` к PostgreSQL + `redis.ping()`
+- При сбое любой зависимости → HTTP 500 с `{"status":"degraded","checks":{...}}`
+- В nginx `sites-enabled/studio-ai-site` добавлен `location /concierge/health → :8002/health`
+- Внешний URL для мониторинга: `https://bt-aistudio.ru/concierge/health`
+- Ответ: `{"status":"ok","checks":{"db":"ok","redis":"ok"},"elapsed_ms":3}` ✅
+- UptimeRobot настроен, Telegram алерт подключён ✅
+
+---
+
 ### 2026-03-04 — Operational Readiness: Rate Limiting на публичных endpoints
 
 **Реализовано:**
