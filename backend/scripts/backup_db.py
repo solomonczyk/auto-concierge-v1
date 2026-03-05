@@ -9,6 +9,10 @@ Environment variables:
     POSTGRES_PASSWORD - Database password
     POSTGRES_DB - Database name
     BACKUP_DIR - Directory to store backups (default: ./backups)
+
+PRODUCTION: Backup on the same server is NOT a real backup (ransomware, disk failure).
+Set BACKUP_DIR to an NFS/S3 mount or add a post-step: rsync/scp to remote storage.
+Schedule via cron: 0 3 * * * (daily at 3 AM).
 """
 
 import os

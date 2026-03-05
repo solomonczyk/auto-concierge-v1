@@ -33,9 +33,16 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Lifespan shutdown initiated")
 
+# Disable Swagger/OpenAPI in production — reduces attack surface
+_docs = None if settings.is_production else "/docs"
+_redoc = None if settings.is_production else "/redoc"
+_openapi = None if settings.is_production else f"{settings.API_V1_STR}/openapi.json"
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url=_docs,
+    redoc_url=_redoc,
+    openapi_url=_openapi,
     lifespan=lifespan
 )
 

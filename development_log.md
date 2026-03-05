@@ -447,5 +447,10 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
 
 - `.github/workflows/e2e.yml` — запуск E2E при push/PR в main.
 - Тесты идут против прода (PLAYWRIGHT_BASE_URL).
+- **PROD_READINESS.md** — полный чеклист (Security, Monitoring, Backup, Tenant Isolation, CI, Infra, Legal) + отчёт 11/18 + 4/8 + 2/6 + 5/7 + 6/6 + 4/10 + 4/5, разделы «Что не сделано», «Сомнения», «Технические риски».
+- **Критические фиксы (до первых клиентов):**
+  - Swagger/docs/OpenAPI отключены в prod (main.py: docs_url/redoc_url/openapi_url=None при is_production).
+  - Docker: USER app (Dockerfile), контейнер не от root.
+  - Backup: docstring в backup_db.py — предупреждение о хранении вне сервера, cron. Приоритизация в PROD_READINESS (🔴/🟠/🟡).
 - Секрет: `PLAYWRIGHT_ADMIN_PASS` в GitHub Secrets.
 - При падении — артефакт playwright-report.

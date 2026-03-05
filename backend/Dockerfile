@@ -16,7 +16,13 @@ RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 COPY . .
 
+# Non-root: reduce blast radius if container is compromised
+RUN groupadd -r app && useradd -r -g app -u 1000 app \
+    && chown -R app:app /app
+
 EXPOSE 8000
+
+USER app
 
 # Production: gunicorn with uvicorn workers
 CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-"]
