@@ -379,3 +379,17 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 | Health monitoring | ⚠️ `/health` есть, внешний мониторинг нет |
 | Brute force на login | ✅ slowapi 5/min |
 | Rate limit публичных endpoints | ✅ Готово |
+
+---
+
+### 2026-03-05 — E2E: фикс race condition после логина
+
+**Проблема:** Тест "логин и переход в панель" падал — URL оставался `/concierge/login` после успешного API (200 + JWT). Debug показал: API успешен, но редирект не выполнялся.
+
+**Root cause:** `LoginPage` вызывал `login(token)` (setState) и сразу `navigate("/")`. React не успевал обновить контекст — `RequireAuth` видел `isAuthenticated: false` и редиректил обратно на login.
+
+**Фикс:** `await new Promise((r) => setTimeout(r, 0))` перед `navigate("/")` — даёт React отрисоваться с новым токеном.
+
+**Дополнительно:**
+- Login rate limit увеличен до 10/min (E2E несколько логинов подряд)
+- WebApp E2E: slug `auto-concierge` вместо legacy `/webapp` (услуги по slug)
