@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -25,8 +26,7 @@ export default function LoginPage() {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" }
             });
 
-            login(response.data.access_token);
-            await new Promise((r) => setTimeout(r, 250));
+            flushSync(() => login(response.data.access_token));
             navigate("/");
         } catch (err) {
             setError("Неверное имя пользователя или пароль");
