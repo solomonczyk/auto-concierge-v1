@@ -386,10 +386,28 @@ git pull origin main && docker compose -f docker-compose.prod.yml up -d --build 
 
 **Проблема:** Тест "логин и переход в панель" падал — URL оставался `/concierge/login` после успешного API (200 + JWT). Debug показал: API успешен, но редирект не выполнялся.
 
-**Root cause:** `LoginPage` вызывал `login(token)` (setState) и сразу `navigate("/")`. React не успевал обновить контекст — `RequireAuth` видел `isAuthenticated: false` и редиректил обратно на login.
+**Диагностика (без гаданий):**
+- Login API возвращает 200 — backend в порядке
+- Set-Cookie не при чём: auth через JWT в localStorage
+- Final URL при падении: `https://bt-aistudio.ru/concierge/login` — navigate не срабатывает
 
-**Фикс:** `await new Promise((r) => setTimeout(r, 0))` перед `navigate("/")` — даёт React отрисоваться с новым токеном.
+**Root cause:** `LoginPage` вызывал `login(token)` (setState) и сразу `navigate("/")`. React не успевал обновить контекст — `RequireAuth` видел `isAuthenticated: false` и редиректил обратно на login. flushSync + queueMicrotask не устранили flakiness.
+
+**Фикс:** Перенос навигации в `useEffect` — реагируем на `isAuthenticated`, а не на callback. Навигация выполняется после commit state, когда RequireAuth уже видит обновлённый токен.
+```tsx
+useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isAuthenticated, navigate]);
+```
+
+**Важно:** E2E тесты идут против прода (`PLAYWRIGHT_BASE_URL=https://bt-aistudio.ru`). Изменения в LoginPage нужно задеплоить на прод, чтобы тест использовал новый код.
+
+**После деплоя — чеклист перед E2E:**
+1. Открыть сайт в браузере в режиме инкогнито
+2. Вручную проверить: логин → редирект
+3. В DevTools убедиться, что токен появился в localStorage
+4. Только после этого запускать E2E
 
 **Дополнительно:**
-- Login rate limit увеличен до 10/min (E2E несколько логинов подряд)
-- WebApp E2E: slug `auto-concierge` вместо legacy `/webapp` (услуги по slug)
+- Login rate limit 10/min
+- WebApp E2E: slug `auto-concierge`
+- `reset_prod_for_e2e.py` — очистка слотов перед E2E
+- auth.ts: при падении пишет `Login API returned X; Final URL: ...` для диагностики

@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { flushSync } from "react-dom";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
@@ -10,8 +9,12 @@ export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
-    const { login } = useAuth();
+    const { login, isAuthenticated } = useAuth();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        if (isAuthenticated) navigate("/", { replace: true });
+    }, [isAuthenticated, navigate]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -26,8 +29,7 @@ export default function LoginPage() {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" }
             });
 
-            flushSync(() => login(response.data.access_token));
-            queueMicrotask(() => navigate("/"));
+            login(response.data.access_token);
         } catch (err) {
             setError("Неверное имя пользователя или пароль");
         }

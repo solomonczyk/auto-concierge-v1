@@ -1,21 +1,9 @@
 import { test, expect } from '@playwright/test'
-
-/**
- * E2E: Dashboard — логин, просмотр записей.
- * Локально: admin/admin. Прод: PLAYWRIGHT_ADMIN_USER, PLAYWRIGHT_ADMIN_PASS из .env
- */
-const adminUser = process.env.PLAYWRIGHT_ADMIN_USER || 'admin'
-const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
-// prod default confirmed: admin/admin
+import { loginAsAdmin } from './helpers/auth'
 
 test.describe('Dashboard', () => {
   test('логин → панель → календарь (полный flow)', async ({ page }) => {
-    await page.goto('/concierge/login')
-    await page.getByPlaceholder(/например: admin/i).fill(adminUser)
-    await page.getByPlaceholder(/ваш пароль/i).fill(adminPass)
-    await page.getByRole('button', { name: /войти/i }).click()
-
-    await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
+    await loginAsAdmin(page)
     await page.getByRole('link', { name: /календарь/i }).click()
     await expect(page).toHaveURL(/\/concierge\/calendar/)
   })
