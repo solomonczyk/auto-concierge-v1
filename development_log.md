@@ -415,3 +415,6 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
   - `auth-ui.spec.ts` — UI login smoke (успешный вход + неверный пароль). Smoke может быть flaky.
   - Остальные спеки — API-auth через `loginAsAdmin`.
 - **WebApp:** при `service_id` в URL (кнопка «Записаться на рекомендованную услугу») теперь сразу переход на шаг «Данные авто» или «Дата/время» (если returning client), без показа списка услуг.
+- **api.ts:** Dashboard-маршруты не считаются WebApp — Bearer токен отправляется корректно.
+- **favicon:** vite.svg 404 → inline data URI.
+- **WebSocket:** при падении `wss://.../concierge/api/v1/ws` проверить nginx: `location /concierge/api/v1/ws` с Upgrade/Connection и proxy_pass на :8002.
