@@ -1,10 +1,26 @@
 # E2E тесты: WebApp, Dashboard, Bot Webhook
 
+## CI (GitHub Actions)
+
+Тесты гоняются автоматически при push/PR в `main`.
+
+**Обязательно:** добавь секрет в GitHub → Settings → Secrets → Actions:
+- `PLAYWRIGHT_ADMIN_PASS` — пароль админа дашборда (prod)
+
+**Опционально** (Repository variables):
+- `PLAYWRIGHT_BASE_URL` — default `https://bt-aistudio.ru`
+- `PLAYWRIGHT_ADMIN_USER` — default `admin`
+- `PLAYWRIGHT_SLUG` — default `auto-concierge`
+
+При падении загружается артефакт `playwright-report` (HTML).
+
+---
+
 ## Запуск на проде
 
 ```powershell
 # PowerShell — подставь актуальные URL из своего деплоя
-$env:PLAYWRIGHT_BASE_URL = "https://bt-aistudio.ru/concierge"
+$env:PLAYWRIGHT_BASE_URL = "https://bt-aistudio.ru"
 $env:PLAYWRIGHT_API_URL = "https://bt-aistudio.ru"
 $env:PLAYWRIGHT_ADMIN_USER = "admin"
 $env:PLAYWRIGHT_ADMIN_PASS = "твой_пароль"

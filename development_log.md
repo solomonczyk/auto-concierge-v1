@@ -418,3 +418,34 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
 - **api.ts:** Dashboard-маршруты не считаются WebApp — Bearer токен отправляется корректно.
 - **favicon:** vite.svg 404 → inline data URI.
 - **WebSocket:** при падении `wss://.../concierge/api/v1/ws` проверить nginx: `location /concierge/api/v1/ws` с Upgrade/Connection и proxy_pass на :8002.
+- **Правовая информация в боте:** `[Название компании]` и `[Сайт]` заменены на config (COMPANY_NAME, SITE_URL). В .env: `COMPANY_NAME=Studio AI Solutions` (или своё).
+
+---
+
+### 2026-03-05 — Итоги дня
+
+**Деплои:** 7 (frontend ×5, api ×1, reset slots ×1)
+
+**Коммиты:**
+| # | Коммит | Суть |
+|---|--------|------|
+| 1 | fix(login): useEffect-based redirect | LoginPage → навигация в useEffect |
+| 2 | fix(health): allow HEAD | UptimeRobot 405 → HEAD поддержан |
+| 3 | fix(webapp): service_id skip | Бот «Записаться на услугу» → сразу шаг авто |
+| 4 | fix(webapp): choose date + waitlist | Нет слотов → две кнопки |
+| 5 | fix(api): dashboard auth token | Dashboard не считался WebApp, токен шёл |
+| 6 | fix: vite.svg 404 | Inline favicon |
+| 7 | fix: legal info placeholders | COMPANY_NAME, SITE_URL в правовой информации |
+
+**Не закоммичено:** backend/app/bot/messages.py, config.py (правовая информация).
+
+**Известные проблемы:** WebSocket падает (проверить nginx).
+
+---
+
+### 2026-03-05 — Playwright в CI
+
+- `.github/workflows/e2e.yml` — запуск E2E при push/PR в main.
+- Тесты идут против прода (PLAYWRIGHT_BASE_URL).
+- Секрет: `PLAYWRIGHT_ADMIN_PASS` в GitHub Secrets.
+- При падении — артефакт playwright-report.
