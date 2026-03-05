@@ -26,7 +26,7 @@ export default function LoginPage() {
             });
 
             login(response.data.access_token);
-            await new Promise((r) => setTimeout(r, 50));
+            await new Promise((r) => setTimeout(r, 150));
             navigate("/");
         } catch (err) {
             setError("Неверное имя пользователя или пароль");
