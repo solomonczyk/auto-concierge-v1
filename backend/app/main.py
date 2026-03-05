@@ -110,7 +110,7 @@ async def log_requests(request, call_next):
     logger.info(f"{request.method} {request.url.path} → {response.status_code}")
     return response
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """
     Deep health check: verifies DB and Redis connectivity.
