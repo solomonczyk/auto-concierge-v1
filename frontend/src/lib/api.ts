@@ -9,12 +9,12 @@ export const api = axios.create({
 
 api.interceptors.request.use((config) => {
     const path = window.location.pathname
-    // WebApp paths: /webapp (legacy) or /concierge/{slug} or /{slug}
-    const isWebApp = path.includes('/webapp') || path.startsWith('/concierge/') || (
-        // /{slug} path: any single-segment path that isn't a dashboard route
-        !path.includes('/login') && !path.includes('/calendar') &&
-        !path.includes('/clients') && !path.includes('/settings') &&
-        path.split('/').filter(Boolean).length === 1 && path !== '/'
+    const segments = path.split('/').filter(Boolean)
+    // WebApp = public booking only. Dashboard (/concierge, /concierge/calendar etc.) needs auth.
+    const isWebApp = path.includes('/webapp') || (
+        segments[0] === 'concierge' && segments[1] && !['login', 'calendar', 'clients', 'settings'].includes(segments[1])
+    ) || (
+        segments.length === 1 && segments[0] !== 'concierge'  // /{slug} legacy
     )
     if (isWebApp) {
         if (config.headers) delete config.headers["Authorization"]
@@ -32,7 +32,10 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         const path = window.location.pathname
-        const isWebApp = path.includes('/webapp') || path.startsWith('/concierge/')
+        const segments = path.split('/').filter(Boolean)
+        const isWebApp = path.includes('/webapp') || (
+            segments[0] === 'concierge' && segments[1] && !['login', 'calendar', 'clients', 'settings'].includes(segments[1])
+        ) || (segments.length === 1 && segments[0] !== 'concierge')
         if (error.response?.status === 401) {
             if (isWebApp) return Promise.reject(error)
             // If session expired, redirect to login
