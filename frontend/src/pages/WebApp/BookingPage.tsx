@@ -284,6 +284,7 @@ export default function BookingPage() {
                 setServices(publicServicesRes.data);
 
                 // Check if returning client (has car data saved)
+                let isReturningClient = false
                 const telegramId = tg?.initDataUnsafe?.user?.id
                 if (telegramId) {
                     try {
@@ -293,6 +294,7 @@ export default function BookingPage() {
                             setCarMake(clientData.car_make)
                             setCarYear(clientData.car_year ? String(clientData.car_year) : '')
                             setVin(clientData.vin || '')
+                            isReturningClient = true
                             setReturningClient(true)
                         }
                     } catch {
@@ -316,13 +318,13 @@ export default function BookingPage() {
                         console.error("Failed to fetch appointment", apptErr);
                     }
                 } else {
-                    // Check for direct service_id link
+                    // Check for direct service_id link (from bot «Записаться на рекомендованную услугу»)
                     const serviceId = urlParams.get('service_id');
                     if (serviceId) {
                         const service = publicServicesRes.data.find((s: Service) => s.id === parseInt(serviceId));
                         if (service) {
                             setSelectedService(service);
-                            // step will be set after returningClient is known — deferred below
+                            setStep(isReturningClient ? 'datetime' : 'car');
                         }
                     }
                 }

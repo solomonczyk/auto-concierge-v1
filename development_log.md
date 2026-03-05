@@ -410,4 +410,8 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
 - Login rate limit 10/min
 - WebApp E2E: slug `auto-concierge`
 - `reset_prod_for_e2e.py` — очистка слотов перед E2E
-- auth.ts: при падении пишет `Login API returned X; Final URL: ...` для диагностики
+- auth.ts: `loginAsAdmin` переведён на API — POST /login/access-token, inject token в localStorage, goto /concierge/. Обход race condition в LoginPage.
+- **Архитектура E2E:**
+  - `auth-ui.spec.ts` — UI login smoke (успешный вход + неверный пароль). Smoke может быть flaky.
+  - Остальные спеки — API-auth через `loginAsAdmin`.
+- **WebApp:** при `service_id` в URL (кнопка «Записаться на рекомендованную услугу») теперь сразу переход на шаг «Данные авто» или «Дата/время» (если returning client), без показа списка услуг.
