@@ -559,14 +559,25 @@ export default function BookingPage() {
                     ) : (
                         <div className="text-center py-6 bg-accent/10 rounded-xl border border-dashed border-accent space-y-3">
                             <p className="text-muted-foreground text-sm">Нет свободных слотов на эту дату</p>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="font-bold border-primary text-primary hover:bg-primary/10"
-                                onClick={() => handleSubmit(true)}
-                            >
-                                ОСТАВИТЬ ЗАЯВКУ В ЛИСТ ОЖИДАНИЯ
-                            </Button>
+                            <p className="text-muted-foreground text-xs">Выберите другую дату выше или оставьте заявку в лист ожидания</p>
+                            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="font-bold border-primary text-primary hover:bg-primary/10"
+                                    onClick={() => setShowCalendar(true)}
+                                >
+                                    ВЫБРАТЬ ДРУГУЮ ДАТУ
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="font-bold border-primary text-primary hover:bg-primary/10"
+                                    onClick={() => handleSubmit(true)}
+                                >
+                                    ЛИСТ ОЖИДАНИЯ
+                                </Button>
+                            </div>
                         </div>
                     )}
 
