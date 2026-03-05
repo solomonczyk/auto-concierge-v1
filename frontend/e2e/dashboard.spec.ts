@@ -6,6 +6,7 @@ import { test, expect } from '@playwright/test'
  */
 const adminUser = process.env.PLAYWRIGHT_ADMIN_USER || 'admin'
 const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
+// prod default confirmed: admin/admin
 
 test.describe('Dashboard', () => {
   test('логин и переход в панель', async ({ page }) => {

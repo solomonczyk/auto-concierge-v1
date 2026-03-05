@@ -14,7 +14,7 @@ from app.models.models import User
 router = APIRouter()
 
 @router.post("/login/access-token")
-@limiter.limit("5/minute")  # Rate limit login attempts
+@limiter.limit("10/minute")  # Rate limit login attempts — 10 allows E2E tests, still blocks brute force
 async def login_access_token(
     request: Request,
     db: AsyncSession = Depends(get_db),

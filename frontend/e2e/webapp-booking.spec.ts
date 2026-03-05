@@ -8,11 +8,14 @@ import { test, expect } from '@playwright/test'
  * - getByPlaceholder / getByRole — работают без data-testid (для старых деплоев)
  * - data-testid добавлен в BookingPage.tsx — после деплоя станет основным
  */
+// Slug of the main prod tenant (tenant_id=3). Override via PLAYWRIGHT_SLUG env var.
+const SLUG = process.env.PLAYWRIGHT_SLUG || 'auto-concierge'
+
 test.describe('WebApp Booking', () => {
   const TELEGRAM_ID = 123456789
 
   test('полный flow: услуга → авто → дата/время → запись', async ({ page }) => {
-    await page.goto(`/concierge/webapp?telegram_id=${TELEGRAM_ID}`)
+    await page.goto(`/concierge/${SLUG}?telegram_id=${TELEGRAM_ID}`)
 
     // Шаг 1: Выбор услуги
     await expect(page.getByRole('heading', { name: /ВЫБЕРИТЕ УСЛУГУ/i })).toBeVisible({ timeout: 10000 })
@@ -62,7 +65,7 @@ test.describe('WebApp Booking', () => {
   })
 
   test('webapp открывается с service_id — сразу шаг авто', async ({ page }) => {
-    await page.goto(`/concierge/webapp?telegram_id=${TELEGRAM_ID}&service_id=1`)
+    await page.goto(`/concierge/${SLUG}?telegram_id=${TELEGRAM_ID}&service_id=1`)
 
     await page.waitForLoadState('networkidle')
 
