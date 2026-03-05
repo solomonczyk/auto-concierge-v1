@@ -49,8 +49,9 @@ test.describe('WebApp Booking', () => {
     await expect(calendarGrid).toBeVisible()
     const enabledDay = calendarGrid.locator('button:not([disabled])').filter({ hasText: /^\d{1,2}$/ }).first()
     await enabledDay.click()
+    await page.waitForLoadState('networkidle')
 
-    // Ждём появления слотов времени
+    // Ждём появления слотов времени (нужны свободные слоты — скрипт reset_prod_for_e2e.py)
     const slotButton = page.locator('button').filter({ hasText: /^\d{2}:\d{2}$/ }).first()
     await expect(slotButton).toBeVisible({ timeout: 20000 })
     await slotButton.click()

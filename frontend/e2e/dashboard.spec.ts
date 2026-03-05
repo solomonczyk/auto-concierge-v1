@@ -9,35 +9,23 @@ const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
 // prod default confirmed: admin/admin
 
 test.describe('Dashboard', () => {
-  test('логин и переход в панель', async ({ page }) => {
+  test('логин → панель → календарь (полный flow)', async ({ page }) => {
     await page.goto('/concierge/login')
-
     await page.getByPlaceholder(/например: admin/i).fill(adminUser)
     await page.getByPlaceholder(/ваш пароль/i).fill(adminPass)
     await page.getByRole('button', { name: /войти/i }).click()
 
     await expect(page).toHaveURL(/\/concierge\/?$/, { timeout: 15000 })
     await expect(page.getByRole('heading', { name: 'Заказы' }).first()).toBeVisible({ timeout: 5000 })
+    await page.getByRole('link', { name: /календарь/i }).click()
+    await expect(page).toHaveURL(/\/concierge\/calendar/)
   })
 
   test('неверный пароль — ошибка', async ({ page }) => {
     await page.goto('/concierge/login')
-
     await page.getByPlaceholder(/например: admin/i).fill('admin')
     await page.getByPlaceholder(/ваш пароль/i).fill('wrongpassword')
     await page.getByRole('button', { name: /войти/i }).click()
-
     await expect(page.getByText(/неверное имя пользователя или пароль/i)).toBeVisible()
-  })
-
-  test('после логина доступен календарь', async ({ page }) => {
-    await page.goto('/concierge/login')
-    await page.getByPlaceholder(/например: admin/i).fill(adminUser)
-    await page.getByPlaceholder(/ваш пароль/i).fill(adminPass)
-    await page.getByRole('button', { name: /войти/i }).click()
-
-    await expect(page).toHaveURL(/\/concierge\/?$/, { timeout: 15000 })
-    await page.getByRole('link', { name: /календарь/i }).click()
-    await expect(page).toHaveURL(/\/concierge\/calendar/)
   })
 })
