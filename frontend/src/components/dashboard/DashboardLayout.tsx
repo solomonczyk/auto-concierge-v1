@@ -28,7 +28,7 @@ export default function DashboardLayout() {
     const closeSidebar = () => setIsSidebarOpen(false);
 
     return (
-        <div className="flex h-screen bg-background overflow-hidden">
+        <div data-testid="dashboard-root" className="flex h-screen bg-background overflow-hidden">
             {/* Mobile Sidebar Overlay */}
             {isSidebarOpen && (
                 <div

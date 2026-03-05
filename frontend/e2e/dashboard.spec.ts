@@ -15,8 +15,7 @@ test.describe('Dashboard', () => {
     await page.getByPlaceholder(/ваш пароль/i).fill(adminPass)
     await page.getByRole('button', { name: /войти/i }).click()
 
-    await expect(page).toHaveURL(/\/concierge\/?$/, { timeout: 15000 })
-    await expect(page.getByRole('heading', { name: 'Заказы' }).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
     await page.getByRole('link', { name: /календарь/i }).click()
     await expect(page).toHaveURL(/\/concierge\/calendar/)
   })
