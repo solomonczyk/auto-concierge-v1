@@ -27,7 +27,7 @@ export default function LoginPage() {
             });
 
             flushSync(() => login(response.data.access_token));
-            navigate("/");
+            queueMicrotask(() => navigate("/"));
         } catch (err) {
             setError("Неверное имя пользователя или пароль");
         }
