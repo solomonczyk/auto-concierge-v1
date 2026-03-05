@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import time as time_module
 from slowapi.errors import RateLimitExceeded
 from app.core.config import settings
 from app.core.rate_limit import limiter
@@ -111,7 +112,50 @@ async def log_requests(request, call_next):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "project": settings.PROJECT_NAME}
+    """
+    Deep health check: verifies DB and Redis connectivity.
+    Returns 200 only when all critical dependencies are reachable.
+    UptimeRobot / any monitor should alert on non-200.
+    """
+    from sqlalchemy import text
+    from app.db.session import async_session_local
+    from app.services.redis_service import RedisService
+
+    checks: dict[str, str] = {}
+    start = time_module.monotonic()
+
+    # --- PostgreSQL ---
+    try:
+        async with async_session_local() as session:
+            await session.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as exc:
+        logger.error("[health] DB check failed: %s", exc)
+        checks["db"] = f"error: {type(exc).__name__}"
+
+    # --- Redis ---
+    try:
+        redis = RedisService.get_redis()
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        logger.error("[health] Redis check failed: %s", exc)
+        checks["redis"] = f"error: {type(exc).__name__}"
+
+    elapsed_ms = round((time_module.monotonic() - start) * 1000)
+    all_ok = all(v == "ok" for v in checks.values())
+
+    payload = {
+        "status": "ok" if all_ok else "degraded",
+        "project": settings.PROJECT_NAME,
+        "checks": checks,
+        "elapsed_ms": elapsed_ms,
+    }
+
+    if not all_ok:
+        return JSONResponse(status_code=500, content=payload)
+    return payload
+
 
 @app.get("/")
 async def root():
