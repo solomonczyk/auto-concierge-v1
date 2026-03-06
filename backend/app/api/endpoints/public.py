@@ -210,8 +210,11 @@ async def create_public_appointment(
                 raise HTTPException(status_code=400, detail="Выбранное время уже занято")
 
         # 6. Get/Create Client
+        # Anonymous browser users (telegram_id=0) need tenant-specific pseudo ID to avoid unique constraint
+        effective_tg_id = payload.telegram_id if payload.telegram_id else -(tenant_id * 1_000_000)
+
         stmt = select(Client).where(
-            and_(Client.telegram_id == payload.telegram_id, Client.tenant_id == tenant_id)
+            and_(Client.telegram_id == effective_tg_id, Client.tenant_id == tenant_id)
         )
         result = await db.execute(stmt)
         client = result.scalar_one_or_none()
@@ -219,7 +222,7 @@ async def create_public_appointment(
         if not client:
             client = Client(
                 tenant_id=tenant_id,
-                telegram_id=payload.telegram_id,
+                telegram_id=effective_tg_id,
                 full_name=payload.full_name,
                 phone="unknown",
                 car_make=payload.car_make,
