@@ -218,12 +218,14 @@ function CarInfoStep({
 
 export default function BookingPage() {
     // Resolve slug from react-router params (/:slug or /concierge/:slug)
-    // Falls back to last path segment for cases where router isn't wrapping us
+    // Fallback: for /concierge/demo-service or /concierge/demo-service/webapp → slug = demo-service
     const { slug: routeSlug } = useParams<{ slug?: string }>()
-    const slug = routeSlug ?? window.location.pathname.split('/').filter(Boolean).pop() ?? ''
-    // axios baseURL is already /concierge/api/v1, so we only append the slug segment
+    const pathSegments = window.location.pathname.split('/').filter(Boolean)
+    const slugFallback = pathSegments[0] === 'concierge' ? pathSegments[1] : pathSegments[0]
+    const slug = routeSlug ?? slugFallback ?? ''
+    // axios baseURL is /concierge/api/v1 — path must NOT start with / or axios treats it as root-absolute
     // Final request: /concierge/api/v1/{slug}/services/public → nginx → backend /api/v1/{slug}/...
-    const apiBase = slug ? `/${slug}` : ''
+    const apiBase = slug ? `${slug}` : ''
 
     const [services, setServices] = useState<Service[]>([]);
     const [loading, setLoading] = useState(true);
