@@ -1,12 +1,15 @@
 import { useMemo, useState, DragEvent } from 'react';
 import { useAppointments, Appointment } from '@/hooks/useAppointments';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
+import { Play } from 'lucide-react';
 import AppointmentEditDialog from './AppointmentEditDialog';
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWebSocket } from "@/contexts/WebSocketContext";
 import { useEffect } from "react";
 import { useUpdateAppointmentStatus } from '@/hooks/useUpdateAppointmentStatus';
+import { api } from '@/lib/api';
 
 const COLUMNS = [
     { id: 'waitlist', title: 'Лист ожидания' },
@@ -120,6 +123,23 @@ export default function KanbanBoard() {
     const { lastMessage } = useWebSocket();
     const updateStatusMutation = useUpdateAppointmentStatus();
 
+    const { data: me } = useQuery({
+        queryKey: ["me"],
+        queryFn: async () => (await api.get("/me")).data,
+    });
+    const isDemoTenant = me?.tenant_slug === "demo-service";
+
+    const runDemoMutation = useMutation({
+        mutationFn: () => api.post("/demo/run"),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["appointments"] });
+        },
+        onError: (err: any) => {
+            const msg = err.response?.data?.detail || "Ошибка запуска демо";
+            alert(msg);
+        },
+    });
+
     const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
     const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
@@ -187,6 +207,19 @@ export default function KanbanBoard() {
 
     return (
         <>
+            {isDemoTenant && (
+                <div className="flex items-center justify-between mb-4">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runDemoMutation.mutate()}
+                        disabled={runDemoMutation.isPending}
+                    >
+                        <Play className="mr-2 h-4 w-4" />
+                        {runDemoMutation.isPending ? "Запуск..." : "Run Demo"}
+                    </Button>
+                </div>
+            )}
             <div
                 className="grid grid-cols-1 md:grid-cols-5 gap-6"
                 onDragOver={(e) => {

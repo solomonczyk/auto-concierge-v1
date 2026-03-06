@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     WEBAPP_VERSION: str = "2026-03-03-1"
     # Base site URL used to build tenant dashboard links (no trailing slash)
     SITE_URL: str = "http://localhost:5173"
+    # Company name for legal info in bot (default: PROJECT_NAME)
+    COMPANY_NAME: str = "Autoservice MVP"
     
     @property
     def GIGACHAT_CREDENTIALS(self) -> Optional[str]:

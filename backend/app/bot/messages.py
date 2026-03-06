@@ -5,6 +5,8 @@ Centralized text content for consistent messaging.
 
 from aiogram import html
 
+from app.core.config import settings
+
 # Status emoji mapping
 STATUS_EMOJI = {
     "new": "🆕",
@@ -303,12 +305,14 @@ def _consultation_error_msg() -> str:
 
 def _legal_info_msg() -> str:
     """Legal information text."""
+    site_url = settings.SITE_URL.rstrip("/")
+    site_link = f'<a href="{site_url}">Сайт</a>'
     return (
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📄 <b>Правовая информация</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"<b>Оператор персональных данных:</b>\n"
-        f"[Название компании]\n\n"
+        f"{html.quote(settings.COMPANY_NAME)}\n\n"
         f"<b>Используемые данные:</b>\n"
         f"• Имя и фамилия из Telegram\n"
         f"• Номер телефона (при регистрации)\n"
@@ -321,7 +325,7 @@ def _legal_info_msg() -> str:
         f"<b>Ваши права:</b>\n"
         f"Вы вправе запросить удаление данных,\n"
         f"написав в поддержку.\n\n"
-        f"🌐 [Сайт]"
+        f"🌐 {site_link}"
     )
 
 

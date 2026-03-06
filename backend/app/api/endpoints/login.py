@@ -9,9 +9,26 @@ from app.api import deps
 from app.core import security
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.models import User
+from app.models.models import User, Tenant
 
 router = APIRouter()
+
+
+@router.get("/me")
+async def get_me(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(deps.get_current_active_user),
+) -> dict:
+    """Current user info with tenant_slug (for demo button visibility)."""
+    if not user.tenant_id:
+        return {"username": user.username, "tenant_slug": None}
+    stmt = select(Tenant).where(Tenant.id == user.tenant_id)
+    result = await db.execute(stmt)
+    tenant = result.scalar_one_or_none()
+    return {
+        "username": user.username,
+        "tenant_slug": tenant.slug if tenant else None,
+    }
 
 @router.post("/login/access-token")
 @limiter.limit("10/minute")  # Rate limit login attempts — 10 allows E2E tests, still blocks brute force

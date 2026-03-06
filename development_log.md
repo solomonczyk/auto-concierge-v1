@@ -418,6 +418,7 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
 - **api.ts:** Dashboard-маршруты не считаются WebApp — Bearer токен отправляется корректно.
 - **favicon:** vite.svg 404 → inline data URI.
 - **WebSocket:** при падении `wss://.../concierge/api/v1/ws` проверить nginx: `location /concierge/api/v1/ws` с Upgrade/Connection и proxy_pass на :8002.
+- **Demo Runner:** `POST /api/v1/demo/run` — только для tenant slug=demo-service. Создаёт demo client + appointment, async workflow меняет статус new→confirmed→in_progress→completed (каждые 5 сек), публикует в Redis (Kanban обновляется), отправляет Telegram в ADMIN_CHAT_ID. Кнопка «Run Demo» на Kanban.
 - **Правовая информация в боте:** `[Название компании]` и `[Сайт]` заменены на config (COMPANY_NAME, SITE_URL). В .env: `COMPANY_NAME=Studio AI Solutions` (или своё).
 
 ---
