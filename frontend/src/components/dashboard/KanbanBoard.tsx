@@ -129,10 +129,17 @@ export default function KanbanBoard() {
     });
     const isDemoTenant = me?.tenant_slug === "demo-service";
 
+    const [demoToastVisible, setDemoToastVisible] = useState(false);
+
     const runDemoMutation = useMutation({
-        mutationFn: () => api.post("/demo/run"),
+        mutationFn: async () => {
+            await api.post("/demo/reset");
+            return api.post("/demo/run");
+        },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["appointments"] });
+            setDemoToastVisible(true);
+            setTimeout(() => setDemoToastVisible(false), 4500);
         },
         onError: (err: any) => {
             const msg = err.response?.data?.detail || "Ошибка запуска демо";
@@ -216,7 +223,7 @@ export default function KanbanBoard() {
                         disabled={runDemoMutation.isPending}
                     >
                         <Play className="mr-2 h-4 w-4" />
-                        {runDemoMutation.isPending ? "Запуск..." : "Run Demo"}
+                        {runDemoMutation.isPending ? "Запуск..." : "🎬 Run Live Demo"}
                     </Button>
                 </div>
             )}
@@ -255,6 +262,13 @@ export default function KanbanBoard() {
                 isOpen={isEditDialogOpen}
                 onClose={() => setIsEditDialogOpen(false)}
             />
+
+            {demoToastVisible && (
+                <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-primary/30 bg-card p-4 shadow-xl">
+                    <p className="text-sm font-semibold text-card-foreground">Демо запущено</p>
+                    <p className="text-xs text-muted-foreground">Следите за Telegram и Kanban</p>
+                </div>
+            )}
         </>
     );
 }

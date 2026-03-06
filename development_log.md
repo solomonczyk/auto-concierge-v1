@@ -474,3 +474,52 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
   - GET `/appointments/?for_kanban=1`: для статуса COMPLETED фильтр — только если `completed_at` в текущий рабочий день И сейчас < work_end (TenantSettings или config: WORK_END, SHOP_TIMEZONE).
   - KanbanBoard: `useAppointments({ forKanban: true })` — использует отфильтрованный список.
 - Записи без `completed_at` (до миграции) в «Готова» не показываются.
+
+---
+
+### 2026-03-06 — Health monitor: 404 -> Up
+
+- **Симптом:** UptimeRobot показывал Down для `https://bt-aistudio.ru/concierge/health` (404 от основного сайта).
+- **Root cause:** в активном `server_name bt-aistudio.ru` отсутствовал `location = /concierge/health`; маршрут был настроен в другом server block.
+- **Fix (nginx):** добавлен `location = /concierge/health` с `proxy_pass http://127.0.0.1:8002/health`, затем `nginx -t` и `systemctl reload nginx`.
+- **Проверка:** `curl -i https://bt-aistudio.ru/concierge/health` -> `HTTP/2 200`, payload: `status=ok`, `db=ok`, `redis=ok`.
+- **Результат:** мониторинг в UptimeRobot перешёл в `Up`.
+
+---
+
+### 2026-03-06 — Demo workflow вынесен в service layer
+
+- Создан `backend/app/services/demo_workflow.py`.
+- Вынесены функции демо-сценария: `create_demo_client`, `send_tg`, `create_demo_appointment`, `move_status`, `run_demo_workflow`.
+- `POST /api/v1/demo/run` упрощён: endpoint только валидирует tenant через `get_demo_tenant` и запускает `asyncio.create_task(run_demo_workflow(tenant.id))`.
+- Сценарий демонстрации теперь отправляет последовательные сообщения и двигает статусы `confirmed -> in_progress -> completed`.
+
+---
+
+### 2026-03-06 — Demo reset endpoint
+
+- Добавлен `POST /api/v1/demo/reset` (только для tenant `demo-service` через `get_demo_tenant`).
+- В `demo_workflow.py` добавлены: `delete_demo_appointments`, `delete_demo_clients`, `reset_demo`.
+- `reset_demo(tenant_id)` удаляет demo appointments и demo client, затем публикует Redis event `DEMO_RESET` для обновления Kanban.
+- Возвращаемый payload: `status`, `deleted_appointments`, `deleted_clients`.
+
+---
+
+### 2026-03-06 — Dashboard button: Run Live Demo
+
+- В `KanbanBoard` обновлена demo-кнопка на `🎬 Run Live Demo`.
+- Логика кнопки: последовательно вызывает `POST /api/v1/demo/reset`, затем `POST /api/v1/demo/run`.
+- После успешного запуска показывается toast:
+  - `Демо запущено`
+  - `Следите за Telegram и Kanban`
+
+---
+
+### 2026-03-06 — Telegram command /demo
+
+- В `backend/app/bot/handlers.py` добавлена команда `/demo`.
+- Поведение:
+  - проверяет tenant через `get_or_create_tenant(db)`;
+  - разрешает запуск только для `tenant.slug == "demo-service"`;
+  - отправляет пользователю вводное сообщение о шагах демо;
+  - запускает `asyncio.create_task(run_demo_workflow(tenant.id))`.

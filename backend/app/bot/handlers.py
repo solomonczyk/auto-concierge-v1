@@ -3,13 +3,14 @@ Telegram bot handlers.
 Main entry point for bot commands and callbacks.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone as tz
 from typing import Optional
 
 from aiogram import Router, F, html
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
@@ -46,6 +47,7 @@ from app.services.redis_service import RedisService
 from app.core.config import settings
 from app.services.ai_core import ai_core, DiagnosticResult
 from app.services.ai_service import ai_service
+from app.services.demo_workflow import run_demo_workflow
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -102,6 +104,28 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard(message.from_user.id)
             )
+
+
+@router.message(Command("demo"))
+async def demo_command_handler(message: Message) -> None:
+    """Run demo workflow from bot command for demo tenant only."""
+    async with async_session_local() as db:
+        tenant = await get_or_create_tenant(db)
+
+    if tenant.slug != "demo-service":
+        await message.answer("⚠️ Команда /demo доступна только для demo tenant.")
+        return
+
+    await message.answer(
+        "🎬 Запускаю демонстрацию системы автосервиса.\n\n"
+        "Сейчас вы увидите:\n"
+        "• запись клиента\n"
+        "• подтверждение визита\n"
+        "• работу сервиса\n"
+        "• завершение заказа"
+    )
+
+    asyncio.create_task(run_demo_workflow(tenant.id))
 
 
 # ──────────────────────────────────────────────
