@@ -118,7 +118,7 @@ function DroppableColumn({ id, title, appointments, onEdit, onDragStart, onDrop,
 }
 
 export default function KanbanBoard() {
-    const { data: appointments = [] } = useAppointments();
+    const { data: appointments = [] } = useAppointments({ forKanban: true });
     const queryClient = useQueryClient();
     const { lastMessage } = useWebSocket();
     const updateStatusMutation = useUpdateAppointmentStatus();

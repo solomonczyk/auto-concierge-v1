@@ -8,7 +8,8 @@ export interface Appointment {
     client_id: number;
     start_time: string;
     end_time: string;
-    status: "new" | "confirmed" | "in_progress" | "done" | "cancelled" | "waitlist";
+    status: "new" | "confirmed" | "in_progress" | "completed" | "done" | "cancelled" | "waitlist";
+    completed_at?: string | null;
     notes?: string;
     car_make?: string;
     car_year?: number;
@@ -27,14 +28,16 @@ export interface Appointment {
     };
 }
 
-export function useAppointments() {
+export function useAppointments(options?: { forKanban?: boolean }) {
+    const forKanban = options?.forKanban ?? false
     return useQuery({
-        queryKey: ["appointments"],
+        queryKey: ["appointments", forKanban ? "kanban" : "all"],
         queryFn: async () => {
-            const { data } = await api.get<Appointment[]>("/appointments/");
-            return data;
+            const params = forKanban ? { for_kanban: "1" } : {}
+            const { data } = await api.get<Appointment[]>("/appointments/", { params })
+            return data
         },
-    });
+    })
 }
 
 export function useUpdateAppointmentStatus() {

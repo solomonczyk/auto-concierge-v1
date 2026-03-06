@@ -462,3 +462,15 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
 
 - Закоммичено и запушено: api/login/demo endpoints, config, KanbanBoard, development_log, e2e (dashboard, auth-ui), init_full_db.py, scripts (check_admin_pass, get_tenant_slug, list_admins, run-e2e.ps1, test_health), удалены history_*.md.
 - Исключено из коммита: backend/.env.test (секреты), tmp_*.py, playwright-report/.
+
+---
+
+### 2026-03-06 — Колонка «Готова»: очистка в конце рабочего дня
+
+- **Требование:** Выполненные записи остаются в «Готова» до конца рабочего дня, затем колонка очищается. Данные остаются в БД.
+- **Реализация:**
+  - `appointments.completed_at` — миграция `b7c8d9e0f1a2`. Заполняется при статусе → COMPLETED.
+  - PATCH `/appointments/{id}/status`: при COMPLETED пишет `completed_at = now`, при смене обратно — очищает.
+  - GET `/appointments/?for_kanban=1`: для статуса COMPLETED фильтр — только если `completed_at` в текущий рабочий день И сейчас < work_end (TenantSettings или config: WORK_END, SHOP_TIMEZONE).
+  - KanbanBoard: `useAppointments({ forKanban: true })` — использует отфильтрованный список.
+- Записи без `completed_at` (до миграции) в «Готова» не показываются.

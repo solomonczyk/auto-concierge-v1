@@ -72,6 +72,10 @@ async def _move_status(
 
         old_status = appt.status
         appt.status = AppointmentStatus(new_status)
+        if appt.status == AppointmentStatus.COMPLETED:
+            appt.completed_at = datetime.now(tz.utc)
+        elif old_status == AppointmentStatus.COMPLETED:
+            appt.completed_at = None
         await db.commit()
         await db.refresh(appt)
 
@@ -79,11 +83,11 @@ async def _move_status(
             chat_id = appt.client.telegram_id if appt.client.telegram_id and appt.client.telegram_id > 0 else settings.ADMIN_CHAT_ID
             if chat_id:
                 try:
-                await NotificationService.notify_client_status_change(
-                    chat_id=chat_id,
-                    service_name=appt.service.name,
-                    new_status=appt.status.value,
-                )
+                    await NotificationService.notify_client_status_change(
+                        chat_id=chat_id,
+                        service_name=appt.service.name,
+                        new_status=appt.status.value,
+                    )
                 except Exception as e:
                     logger.error(f"Demo notify error: {e}")
 
@@ -95,7 +99,7 @@ async def _move_status(
                 "data": {
                     "id": appt.id,
                     "shop_id": appt.shop_id,
-                    "status": appt.status,
+                    "status": appt.status.value,
                 },
             }),
         )

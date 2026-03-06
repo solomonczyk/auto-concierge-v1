@@ -9,7 +9,7 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.orm import joinedload
 from app.db.session import get_db
 from app.api import deps
-from app.models.models import Appointment, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan
+from app.models.models import Appointment, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
 from app.services.redis_service import RedisService 
 from app.services.external_integration_service import external_integration
 from app.core.config import settings
@@ -66,13 +66,14 @@ class AppointmentRead(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+    completed_at: Optional[datetime] = None
     notes: Optional[str] = None
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -282,7 +283,11 @@ async def update_appointment_status(
 
     old_status = appt.status
     appt.status = status_update.status
-    
+    if appt.status == AppointmentStatus.COMPLETED:
+        appt.completed_at = datetime.now(tz.utc)
+    elif old_status == AppointmentStatus.COMPLETED:
+        appt.completed_at = None
+
     await db.commit()
     await db.refresh(appt)
     
@@ -320,22 +325,58 @@ async def update_appointment_status(
     
     return appt
 
+def _should_show_completed_in_kanban(
+    completed_at: Optional[datetime],
+    work_end: int,
+    tz_name: str,
+) -> bool:
+    """Show in 'Готова' column only if completed today and before end of workday."""
+    if completed_at is None:
+        return False
+    tz_obj = ZoneInfo(tz_name)
+    now_local = datetime.now(tz_obj)
+    completed_local = completed_at.astimezone(tz_obj)
+    if completed_local.date() != now_local.date():
+        return False
+    end_of_day = now_local.replace(hour=work_end, minute=0, second=0, microsecond=0)
+    if now_local >= end_of_day:
+        return False
+    return True
+
+
 @router.get("/", response_model=List[AppointmentRead])
 async def read_appointments(
-    skip: int = 0, 
-    limit: int = 100, 
+    skip: int = 0,
+    limit: int = 100,
+    for_kanban: bool = False,
     db: AsyncSession = Depends(get_db),
-    tenant_id: int = Depends(deps.get_current_tenant_id)
+    tenant_id: int = Depends(deps.get_current_tenant_id),
 ):
+    fetch_limit = limit * 3 if for_kanban else limit
     stmt = (
         select(Appointment)
         .options(joinedload(Appointment.client), joinedload(Appointment.service))
         .where(Appointment.tenant_id == tenant_id)
         .offset(skip)
-        .limit(limit)
+        .limit(fetch_limit)
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    appointments = list(result.scalars().all())
+
+    if for_kanban:
+        ts_stmt = select(TenantSettings).where(TenantSettings.tenant_id == tenant_id)
+        ts_result = await db.execute(ts_stmt)
+        ts = ts_result.scalar_one_or_none()
+        work_end = ts.work_end if ts else settings.WORK_END
+        tz_name = ts.timezone if (ts and ts.timezone) else settings.SHOP_TIMEZONE
+        appointments = [
+            a for a in appointments
+            if a.status != AppointmentStatus.COMPLETED
+            or _should_show_completed_in_kanban(a.completed_at, work_end, tz_name)
+        ]
+        appointments = appointments[:limit]
+
+    return appointments
 
 @router.get("/{id}", response_model=AppointmentRead)
 async def read_appointment(
