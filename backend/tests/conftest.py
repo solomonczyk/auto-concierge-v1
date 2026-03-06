@@ -53,7 +53,6 @@ test_settings = Settings(
     ENCRYPTION_KEY=None,
     ENVIRONMENT="test",
     TELEGRAM_BOT_TOKEN="123456789:AABBCCDDEEFFaabbccddeeff",
-    PUBLIC_TENANT_ID=1,
 )
 
 # Override settings before importing app

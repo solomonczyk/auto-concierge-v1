@@ -255,7 +255,14 @@ async def create_appointment(
         final_appt = result.scalar_one()
         
         # 3. External Integration Hook (Hardened: Persistent Redis Queue)
-        external_integration.enqueue_appointment(final_appt.id, tenant_id)
+        try:
+            external_integration.enqueue_appointment(final_appt.id, tenant_id)
+        except Exception as integration_error:
+            logger.error(
+                "External integration enqueue failed for appointment %s: %s",
+                final_appt.id,
+                integration_error,
+            )
         
         return final_appt
         

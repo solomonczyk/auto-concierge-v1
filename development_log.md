@@ -560,3 +560,121 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
   - `backend/app/api/endpoints/webhook.py`:
     - добавлен defense-in-depth: в `production` при пустом секрете endpoint возвращает `503`.
   - Эффект: webhook не может работать в проде без секрета.
+
+---
+
+### 2026-03-06 — Regression test: integration failure must not break appointment creation
+
+- Добавлен fail-safe в `POST /api/v1/appointments/`:
+  - вызов `external_integration.enqueue_appointment(...)` обёрнут в `try/except` с логированием.
+- Добавлен регрессионный тест `test_create_appointment_survives_external_integration_failure`:
+  - мок `external_integration.enqueue_appointment` выбрасывает исключение;
+  - API создания записи возвращает `200`;
+  - созданная запись присутствует в `GET /api/v1/appointments/`.
+- Исправлен тестовый bootstrap:
+  - `backend/tests/conftest.py` — удалён устаревший `PUBLIC_TENANT_ID` из `Settings(...)` (после удаления поля из config).
+- Результат прогона:
+  - `pytest tests/test_appointments.py -k survives_external_integration_failure -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — Regression test: webhook blocked in production without secret
+
+- Добавлен тест `backend/tests/test_webhook_security.py`:
+  - в тесте `ENVIRONMENT=production`, `TELEGRAM_WEBHOOK_SECRET=None`;
+  - POST `/api/v1/webhook` возвращает `503`;
+  - проверяется, что обработка payload не стартует (`RedisService.get_redis` и `dp.feed_update` не вызываются).
+- Результат прогона:
+  - `pytest tests/test_webhook_security.py -k webhook_503_in_production_when_secret_missing -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — JWT/WS auth migration note
+
+- Current: JWT хранится в `localStorage`, WebSocket auth передаётся через `?token=...`.
+- Risk: возможная утечка через XSS, reverse-proxy logs, server logs и browser history-like surfaces.
+- Target (web auth): `HttpOnly + Secure + SameSite` cookie-based auth.
+- Target (WS auth): short-lived WS ticket вместо JWT в query string.
+- Phase 1: убрать JWT из WS query string, внедрить WS ticket.
+- Phase 2: мигрировать с `localStorage` на cookie-based auth.
+- Phase 3: при необходимости добавить refresh/session rotation.
+
+---
+
+### 2026-03-06 — Mini spec: WS ticket authentication flow
+
+- Endpoint выдачи ticket: `POST /api/v1/ws-ticket`.
+- Получатель ticket: только уже аутентифицированный пользователь (валидная web-сессия/JWT).
+- Payload ticket: `user_id`, `tenant_id`, `role`, `exp`, `jti` (одноразовый идентификатор).
+- TTL ticket: короткий, `30-60` секунд.
+- Frontend flow: сначала запросить ticket, затем открыть WS как `wss://.../api/v1/ws?ticket=...` (без `?token=...`).
+- Backend validate: подпись ticket + срок жизни (`exp`) + соответствие tenant/user context.
+- Anti-replay: одноразовость по `jti` через Redis/store (consume-on-connect, повтор -> reject).
+- Ошибка/истечение: backend возвращает `4401/4403`, клиент запрашивает новый ticket и переподключает WS.
+- Логирование: не логировать полный ticket в access/error logs, только trace/jti.
+
+---
+
+### 2026-03-06 — WS ticket service skeleton
+
+- Добавлен каркас `backend/app/services/ws_ticket_service.py`.
+- Зафиксированы константы: `WS_TICKET_TTL_SECONDS=45`, `WS_TICKET_TYPE=ws_ticket`.
+- Добавлены функции: `create_ws_ticket(...)`, `validate_ws_ticket(...)`.
+- Зафиксированные claims: `type`, `user_id`, `tenant_id`, `role`, `exp`, `jti`.
+- Подпись на текущем этапе: `settings.SECRET_KEY` (с пометкой на будущий `WS_TICKET_SECRET`).
+
+---
+
+### 2026-03-06 — Unit test: ws_ticket_service round-trip
+
+- Добавлен `backend/tests/test_ws_ticket_service.py`.
+- Тест `test_ws_ticket_create_and_validate_roundtrip` проверяет:
+  - `create_ws_ticket(...)` возвращает непустую строку ticket;
+  - `validate_ws_ticket(...)` успешно возвращает claims;
+  - claims содержат: `type=ws_ticket`, `user_id`, `tenant_id`, `role`, `jti`, `exp`.
+- Результат прогона:
+  - `pytest tests/test_ws_ticket_service.py -k roundtrip -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — Endpoint contract: POST /api/v1/ws-ticket
+
+- Добавлен endpoint `POST /api/v1/ws-ticket` (`backend/app/api/endpoints/ws_ticket.py`).
+- Доступ: только аутентифицированный активный пользователь (`get_current_active_user`), при отсутствии `tenant_id` -> `403`.
+- Логика: берёт `user_id`, `tenant_id`, `role` из auth-context и вызывает `create_ws_ticket(...)`.
+- Ответ `200`: `{ "ticket": "...", "expires_in": 45, "token_type": "ws_ticket" }`.
+- Роут подключён в `backend/app/api/api.py` (tag `websocket`).
+- Тест: `backend/tests/test_ws_ticket_api.py::test_issue_ws_ticket_authenticated_returns_200`.
+- Результат: `pytest tests/test_ws_ticket_api.py -k authenticated_returns_200 -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — WS endpoint: ticket-first auth with token fallback
+
+- Обновлён `backend/app/api/endpoints/ws.py`:
+  - приоритет auth: `ticket` (`?ticket=...`) -> временный fallback на legacy `token` (`?token=...`);
+  - `ticket` валидируется через `validate_ws_ticket(...)`;
+  - при невалидном/отсутствующем контексте закрытие `4401/4403`.
+- Временный auth-context для WS из ticket:
+  - `auth_type`, `user_id`, `tenant_id`, `role`, `jti` (сохраняется в `websocket.state.auth_context`).
+- Добавлен тест `backend/tests/test_ws_ticket_ws_connect.py`:
+  - сценарий `WS connect` по `?ticket=...` проходит успешно.
+- Результат прогона:
+  - `pytest tests/test_ws_ticket_ws_connect.py -k ticket_success -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — WS ticket anti-replay (jti) via Redis
+
+- Добавлен `backend/app/services/ws_ticket_store.py` с `consume_jti_once(jti, ttl_seconds)`.
+- Реализация одноразовости: Redis `SET key value NX EX <ttl>`.
+  - первый connect с `jti` -> успех;
+  - повторный connect с тем же `jti` -> reject.
+- В `backend/app/api/endpoints/ws.py` anti-replay включён только для `ticket`-path.
+- Legacy fallback `?token=...` не изменялся.
+- TTL ключа берётся из оставшегося времени жизни ticket (`exp - now`, минимум 1 секунда).
+- Проверка:
+  - `backend/tests/test_ws_ticket_ws_connect.py` теперь подтверждает:
+    - 1-й connect по ticket успешен;
+    - 2-й connect тем же ticket закрывается с `4403`.
+  - Результат: `pytest tests/test_ws_ticket_ws_connect.py -k ticket_success -q` -> `1 passed`.
