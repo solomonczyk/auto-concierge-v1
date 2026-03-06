@@ -2,6 +2,7 @@ import logging
 import httpx
 from typing import Optional, Dict, Any
 from app.models.models import Appointment, Tenant
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,18 +20,29 @@ class ExternalIntegrationService:
     """
 
     @staticmethod
-    def enqueue_appointment(appointment_id: int, tenant_id: int):
+    def enqueue_appointment(appointment_id: int, tenant_id: int) -> bool:
         """
-        Hardened: Enqueue the sync task into persistent Redis Queue.
+        Hardened: enqueue sync task to persistent Redis queue.
+        Never raises to caller - failures are logged and ignored.
         """
-        redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}"
-        q = Queue('default', connection=Redis.from_url(redis_url))
-        q.enqueue(
-            ExternalIntegrationService.run_sync_job, 
-            appointment_id, 
-            tenant_id,
-            retry=3 # Hardened: Automatic retries
-        )
+        try:
+            redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}"
+            q = Queue("default", connection=Redis.from_url(redis_url))
+            q.enqueue(
+                ExternalIntegrationService.run_sync_job,
+                appointment_id,
+                tenant_id,
+                retry=3,  # Hardened: automatic retries
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                "Failed to enqueue external sync for appointment=%s tenant=%s: %s",
+                appointment_id,
+                tenant_id,
+                exc,
+            )
+            return False
 
     @staticmethod
     def run_sync_job(appointment_id: int, tenant_id: int):

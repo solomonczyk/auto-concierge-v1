@@ -13,6 +13,14 @@ async def bot_webhook(
     update: dict,
     x_telegram_bot_api_secret_token: str | None = Header(default=None)
 ):
+    # Defense in depth: do not accept Telegram updates in production
+    # when webhook secret is not configured.
+    if settings.is_production and not settings.TELEGRAM_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook secret is not configured",
+        )
+
     if settings.TELEGRAM_WEBHOOK_SECRET:
         if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
             x_telegram_bot_api_secret_token,

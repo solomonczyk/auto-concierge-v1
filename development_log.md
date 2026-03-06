@@ -523,3 +523,40 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
   - разрешает запуск только для `tenant.slug == "demo-service"`;
   - отправляет пользователю вводное сообщение о шагах демо;
   - запускает `asyncio.create_task(run_demo_workflow(tenant.id))`.
+
+---
+
+### 2026-03-06 — Prod nginx fix: concierge routes + mixed content
+
+- Добавлены маршруты в `bt-aistudio.ru` server block:
+  - `location = /concierge` -> `301 /concierge/login`
+  - `location ^~ /concierge/` -> frontend `127.0.0.1:8081`
+  - `location ^~ /concierge/api/` -> backend `127.0.0.1:8002/api/`
+  - `location ^~ /concierge/api/v1/ws` -> backend websocket
+- Зафиксирован root cause mixed-content:
+  - backend redirect для `/api/v1/services` возвращал абсолютный `http://.../api/...` и ломал HTTPS-страницу.
+- Fix:
+  - в `location ^~ /concierge/api/` добавлены `X-Forwarded-Proto`, `X-Forwarded-Prefix`
+  - добавлен `proxy_redirect` на `https://$host/concierge/api/...`
+  - отключён глобальный `rewrite ^(.+)/$ $1 permanent;`, который создавал redirect-loop на API (`/services` <-> `/services/`).
+- Проверки после фикса:
+  - `https://bt-aistudio.ru/concierge/health` -> `200`
+  - `https://bt-aistudio.ru/concierge/api/v1/services` -> `307` на HTTPS `/concierge/api/.../`
+  - `https://bt-aistudio.ru/concierge/api/v1/services/` -> корректный backend response (без insecure redirect).
+
+---
+
+### 2026-03-06 — Закрытие 2 критических рисков аудита
+
+- **Risk #1 (NameError / 500 после commit):**
+  - `backend/app/services/external_integration_service.py`:
+    - добавлен импорт `settings`;
+    - `enqueue_appointment()` переведён в fail-safe режим: исключения логируются, наружу не пробрасываются, возвращается `bool`.
+  - Эффект: ошибка внешней интеграции больше не ломает API-ответ после создания записи.
+
+- **Risk #2 (Webhook без секрета):**
+  - `backend/app/core/config.py`:
+    - в `production` теперь обязательна переменная `TELEGRAM_WEBHOOK_SECRET` (иначе startup error).
+  - `backend/app/api/endpoints/webhook.py`:
+    - добавлен defense-in-depth: в `production` при пустом секрете endpoint возвращает `503`.
+  - Эффект: webhook не может работать в проде без секрета.
