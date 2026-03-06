@@ -455,3 +455,10 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
   - Backup: docstring в backup_db.py — предупреждение о хранении вне сервера, cron. Приоритизация в PROD_READINESS (🔴/🟠/🟡).
 - Секрет: `PLAYWRIGHT_ADMIN_PASS` в GitHub Secrets.
 - При падении — артефакт playwright-report.
+
+---
+
+### 2026-03-06 — Commit & push main
+
+- Закоммичено и запушено: api/login/demo endpoints, config, KanbanBoard, development_log, e2e (dashboard, auth-ui), init_full_db.py, scripts (check_admin_pass, get_tenant_slug, list_admins, run-e2e.ps1, test_health), удалены history_*.md.
+- Исключено из коммита: backend/.env.test (секреты), tmp_*.py, playwright-report/.
