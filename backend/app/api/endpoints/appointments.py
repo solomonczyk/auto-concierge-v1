@@ -3,13 +3,13 @@ from datetime import datetime, timedelta, timezone as tz
 from zoneinfo import ZoneInfo
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.orm import joinedload
 from app.db.session import get_db
 from app.api import deps
-from app.models.models import Appointment, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
+from app.models.models import Appointment, AppointmentHistory, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
 from app.services.redis_service import RedisService 
 from app.services.external_integration_service import external_integration
 from app.core.config import settings
@@ -20,6 +20,7 @@ from app.core.metrics import (
     APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL,
 )
 from app.bot.tenant import get_tenant_shop
+from app.schemas.appointment_history import AppointmentHistoryRead
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class AppointmentRead(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+    created_at: Optional[datetime] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
 
@@ -398,17 +400,13 @@ async def update_appointment_status(
         asyncio.create_task(notify_via_dispatch())
 
     redis = RedisService.get_redis()
-    message = {
-        "type": "appointment_status_changed",
-        "data": {
-            "id": appt.id,
-            "shop_id": appt.shop_id,
-            "old_status": old_status.value,
-            "new_status": target.value,
-            "changed_by": current_user.id,
-        },
+    payload = {
+        "type": "appointment_status_updated",
+        "appointment_id": appt.id,
+        "old_status": old_status.value,
+        "new_status": target.value,
     }
-    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(payload))
 
     return appt
 
@@ -474,6 +472,79 @@ KANBAN_STATUSES = (
 )
 
 
+@router.get("/today", response_model=List[AppointmentRead])
+async def read_appointments_today(
+    skip: int = 0,
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Today's appointments: only records for the current day in tenant timezone.
+    Sorted by start_time ASC, paginated.
+    """
+    ts_stmt = select(TenantSettings).where(TenantSettings.tenant_id == tenant_id)
+    ts_result = await db.execute(ts_stmt)
+    ts = ts_result.scalar_one_or_none()
+    tz_name = ts.timezone if (ts and ts.timezone) else settings.SHOP_TIMEZONE
+    tz_obj = ZoneInfo(tz_name)
+    now_local = datetime.now(tz_obj)
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start_utc = day_start_local.astimezone(tz.utc)
+    day_end_utc = day_end_local.astimezone(tz.utc)
+
+    stmt = (
+        select(Appointment)
+        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .where(
+            and_(
+                Appointment.tenant_id == tenant_id,
+                Appointment.start_time >= day_start_utc,
+                Appointment.start_time < day_end_utc,
+            )
+        )
+        .order_by(Appointment.start_time.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/terminal", response_model=List[AppointmentRead])
+async def read_appointments_terminal(
+    skip: int = 0,
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Terminal block: only cancelled and no_show appointments.
+    Paginated, tenant-scoped.
+    """
+    stmt = (
+        select(Appointment)
+        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .where(
+            and_(
+                Appointment.tenant_id == tenant_id,
+                Appointment.status.in_(
+                    (
+                        AppointmentStatus.CANCELLED,
+                        AppointmentStatus.NO_SHOW,
+                    )
+                ),
+            )
+        )
+        .order_by(Appointment.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 @router.get("/kanban", response_model=List[AppointmentRead])
 async def read_appointments_kanban(
     skip: int = 0,
@@ -499,6 +570,50 @@ async def read_appointments_kanban(
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/{appointment_id}/history", response_model=List[AppointmentHistoryRead])
+async def read_appointment_history(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Get status change history for an appointment (lifecycle audit).
+    Returns records ordered by created_at ASC.
+    """
+    stmt = (
+        select(AppointmentHistory, User.username)
+        .outerjoin(User, AppointmentHistory.changed_by_user_id == User.id)
+        .where(
+            and_(
+                AppointmentHistory.appointment_id == appointment_id,
+                AppointmentHistory.tenant_id == tenant_id,
+            )
+        )
+        .order_by(AppointmentHistory.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    appt_stmt = select(Appointment).where(
+        and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id)
+    )
+    appt_result = await db.execute(appt_stmt)
+    if not appt_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    return [
+        AppointmentHistoryRead(
+            id=h.id,
+            appointment_id=h.appointment_id,
+            old_status=h.old_status,
+            new_status=h.new_status,
+            created_at=h.created_at,
+            actor=username,
+        )
+        for h, username in rows
+    ]
 
 
 @router.get("/{id}", response_model=AppointmentRead)

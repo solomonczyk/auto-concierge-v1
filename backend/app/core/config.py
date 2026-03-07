@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 import secrets
 import os
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 def generate_secret_key() -> str:
     """Generate a secure random secret key"""
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         user = quote_plus(self.POSTGRES_USER)
-        password = quote_plus(self.POSTGRES_PASSWORD)
+        password = quote(self.POSTGRES_PASSWORD, safe="")
         return f"postgresql+asyncpg://{user}:{password}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
 
     @property
