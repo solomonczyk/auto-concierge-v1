@@ -63,7 +63,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.db.session import Base, get_db
 from app.main import app
-from app.models.models import User, Shop, Service, TariffPlan, Tenant, TenantStatus, UserRole
+from app.models.models import User, Shop, Service, Client, TariffPlan, Tenant, TenantStatus, UserRole
 from app.core.security import get_password_hash
 
 
@@ -129,7 +129,7 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
     """Provide a clean database session for each test"""
     async with test_async_session() as session:
         # Clean previous test data (file-based DB persists across tests)
-        for table in ("appointments", "clients", "services", "users", "shops", "tenants", "tariff_plans"):
+        for table in ("appointment_history", "appointments", "clients", "services", "users", "shops", "tenants", "tariff_plans"):
             try:
                 await session.execute(text(f"DELETE FROM {table}"))
             except Exception:
@@ -176,6 +176,15 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
                 base_price=1500.0
             )
             session.add(service)
+            await session.flush()
+
+            # Create test client (required for appointments)
+            test_client = Client(
+                tenant_id=1,
+                full_name="Test Client",
+                phone="+79991234567"
+            )
+            session.add(test_client)
             await session.flush()
 
             # Create test user (shop_id links admin to shop for create_appointment)

@@ -1,11 +1,12 @@
 """
-Bot loader — creates Bot, Dispatcher with Redis FSM storage.
+Bot loader — Dispatcher, FSM storage, handlers. Bot instance from app.bot.client.
 """
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
 
+from app.bot.client import bot
 from app.core.config import settings
 
 
@@ -20,12 +21,6 @@ def _make_storage() -> RedisStorage | None:
         logging.warning(f"Redis FSM storage unavailable, using MemoryStorage: {e}")
         return None
 
-
-try:
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-except Exception:
-    logging.warning("INVALID BOT TOKEN. Bot features will be disabled.")
-    bot = None
 
 _storage = _make_storage()
 

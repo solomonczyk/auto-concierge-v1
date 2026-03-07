@@ -363,25 +363,39 @@ async def update_appointment_status(
     await db.commit()
     await db.refresh(appt)
 
-    if appt.client and appt.client.telegram_id:
-        from app.services.notification_service import NotificationService
+    from app.services.notification_service import NotificationService, STATUS_TO_NOTIFICATION_EVENT
+
+    notification_event = STATUS_TO_NOTIFICATION_EVENT.get(target.value)
+    if notification_event and appt.client and appt.client.telegram_id:
         import asyncio
 
-        async def notify_client():
+        async def notify_via_dispatch():
             try:
-                await NotificationService.notify_client_status_change(
-                    chat_id=appt.client.telegram_id,
-                    service_name=appt.service.name,
-                    new_status=target.value,
+                await NotificationService.dispatch(
+                    event_type=notification_event,
+                    appointment_id=appt.id,
+                    tenant_id=tenant_id,
+                    recipient_roles=["client"],
+                    recipient_ids={"client_telegram_id": appt.client.telegram_id},
+                    context={
+                        "old_status": old_status.value,
+                        "new_status": target.value,
+                        "service_name": appt.service.name if appt.service else None,
+                    },
                 )
-            except Exception as notify_error:
-                logger.error(
+            except NotImplementedError:
+                logger.warning(
+                    "NotificationService.dispatch not wired yet for appointment %s",
+                    appt.id,
+                )
+            except Exception as exc:
+                logger.exception(
                     "Notification failed for appointment %s: %s",
                     appt.id,
-                    notify_error,
+                    exc,
                 )
 
-        asyncio.create_task(notify_client())
+        asyncio.create_task(notify_via_dispatch())
 
     redis = RedisService.get_redis()
     message = {
@@ -450,6 +464,42 @@ async def read_appointments(
         appointments = appointments[:limit]
 
     return appointments
+
+KANBAN_STATUSES = (
+    AppointmentStatus.WAITLIST,
+    AppointmentStatus.NEW,
+    AppointmentStatus.CONFIRMED,
+    AppointmentStatus.IN_PROGRESS,
+    AppointmentStatus.COMPLETED,
+)
+
+
+@router.get("/kanban", response_model=List[AppointmentRead])
+async def read_appointments_kanban(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Kanban board: only waitlist, new, confirmed, in_progress, completed.
+    Excludes cancelled and no_show.
+    """
+    stmt = (
+        select(Appointment)
+        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .where(
+            and_(
+                Appointment.tenant_id == tenant_id,
+                Appointment.status.in_(KANBAN_STATUSES),
+            )
+        )
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
 
 @router.get("/{id}", response_model=AppointmentRead)
 async def read_appointment(
@@ -659,17 +709,26 @@ async def create_public_appointment(
         
         async def notify():
             try:
-                # Notify User
-                msg = f"✅ <b>Запись подтверждена!</b>\n\n🔧 <b>Услуга:</b> {service.name}\n🕐 <b>Время:</b> {time_str}"
-                if payload.is_waitlist:
-                    msg = f"📝 <b>Лист ожидания</b>\n\n🔧 <b>Услуга:</b> {service.name}\n📅 <b>Дата:</b> {start_time_naive.strftime('%d.%m.%Y')}"
-                
-                await NotificationService.send_booking_confirmation(payload.telegram_id, msg, payload.telegram_id)
-
-                # Notify Admin (only if admin chat ≠ client — avoid duplicate in same chat)
+                recipient_roles = ["client"]
                 if not payload.is_waitlist and settings.ADMIN_CHAT_ID and str(settings.ADMIN_CHAT_ID) != str(payload.telegram_id):
-                    admin_msg = f"🆕 <b>Новая запись! (WebApp)</b>\n\n👤 {payload.full_name}\n🔧 {service.name}\n🕐 {time_str}"
-                    await NotificationService.notify_admin(admin_msg)
+                    recipient_roles.append("manager")
+                recipient_ids = {"client_telegram_id": payload.telegram_id}
+                if settings.ADMIN_CHAT_ID:
+                    recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
+                await NotificationService.dispatch(
+                    event_type="appointment_created",
+                    appointment_id=appt.id,
+                    tenant_id=tenant_id,
+                    recipient_roles=recipient_roles,
+                    recipient_ids=recipient_ids,
+                    context={
+                        "service_name": service.name,
+                        "slot_time": time_str,
+                        "date_str": start_time_naive.strftime("%d.%m.%Y"),
+                        "is_waitlist": payload.is_waitlist,
+                        "client_name": payload.full_name,
+                    },
+                )
             except Exception as e:
                 logger.error(f"Notification error: {e}")
 

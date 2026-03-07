@@ -8,7 +8,7 @@ export interface Appointment {
     client_id: number;
     start_time: string;
     end_time: string;
-    status: "new" | "confirmed" | "in_progress" | "completed" | "done" | "cancelled" | "waitlist";
+    status: "new" | "confirmed" | "in_progress" | "completed" | "cancelled" | "no_show" | "waitlist";
     completed_at?: string | null;
     notes?: string;
     car_make?: string;

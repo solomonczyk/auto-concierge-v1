@@ -54,26 +54,6 @@ router = Router()
 
 
 # ──────────────────────────────────────────────
-#  Helpers
-# ──────────────────────────────────────────────
-
-async def _notify_admin(text: str) -> None:
-    """Send a message to the admin chat if ADMIN_CHAT_ID is configured."""
-    if not settings.ADMIN_CHAT_ID:
-        return
-    try:
-        from app.bot.loader import bot
-        if bot:
-            await bot.send_message(
-                chat_id=settings.ADMIN_CHAT_ID,
-                text=text,
-                parse_mode="HTML",
-            )
-    except Exception as e:
-        logger.warning(f"Admin notification failed: {e}")
-
-
-# ──────────────────────────────────────────────
 #  Command Handlers
 # ──────────────────────────────────────────────
 
@@ -391,6 +371,7 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
         if appt:
             client_name = appt.client.full_name if appt.client else "Неизвестно"
             service_name = appt.service.name if appt.service else "Неизвестно"
+            old_status = appt.status.value
 
             appt.status = AppointmentStatus.CANCELLED
             await db.commit()
@@ -400,9 +381,18 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
                 parse_mode="HTML"
             )
 
-            # Notify admin
-            await _notify_admin(
-                _admin_cancelled_msg(appt_id, client_name, service_name)
+            # Notify via dispatch (client + manager per contract)
+            from app.services.notification_service import NotificationService
+            recipient_ids = {"client_telegram_id": appt.client.telegram_id} if appt.client and appt.client.telegram_id else {}
+            if settings.ADMIN_CHAT_ID:
+                recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
+            await NotificationService.dispatch(
+                event_type="appointment_cancelled",
+                appointment_id=appt.id,
+                tenant_id=tenant.id,
+                recipient_roles=["client", "manager"],
+                recipient_ids=recipient_ids,
+                context={"service_name": service_name, "old_status": old_status, "new_status": "cancelled"},
             )
 
             # Broadcast to dashboard via Redis
@@ -582,16 +572,24 @@ async def web_app_data_handler(message: Message) -> None:
 
             await message.answer(msg, parse_mode="HTML")
 
-            # Admin notification for new bookings (not edits, not waitlist)
+            # Manager notification for new bookings (not edits, not waitlist)
             if not is_waitlist and not appointment_id:
-                client_phone = client.phone if client else "—"
-                await _notify_admin(
-                    _admin_new_booking_msg(
-                        client_name=client.full_name,
-                        phone=client_phone,
-                        service_name=service.name,
-                        time_str=time_str,
-                    )
+                from app.services.notification_service import NotificationService
+                recipient_ids = {}
+                if settings.ADMIN_CHAT_ID:
+                    recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
+                await NotificationService.dispatch(
+                    event_type="appointment_created",
+                    appointment_id=appt.id,
+                    tenant_id=tenant.id,
+                    recipient_roles=["manager"],
+                    recipient_ids=recipient_ids,
+                    context={
+                        "service_name": service.name,
+                        "slot_time": time_str,
+                        "is_waitlist": is_waitlist,
+                        "client_name": client.full_name if client else "—",
+                    },
                 )
 
             # Redis broadcast

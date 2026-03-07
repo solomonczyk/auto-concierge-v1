@@ -11,6 +11,9 @@ import { useEffect } from "react";
 import { useUpdateAppointmentStatus } from '@/hooks/useUpdateAppointmentStatus';
 import { api } from '@/lib/api';
 
+/** Статусы main board. cancelled и no_show явно исключены (terminal статусы). */
+const KANBAN_VISIBLE_STATUSES = ['waitlist', 'new', 'confirmed', 'in_progress', 'completed'] as const;
+
 const COLUMNS = [
     { id: 'waitlist', title: 'Лист ожидания' },
     { id: 'new', title: 'Новая' },
@@ -160,22 +163,22 @@ export default function KanbanBoard() {
         }
     }, [lastMessage, queryClient]);
 
-    // Group appointments by status
+    // Group appointments by status. cancelled и no_show явно исключены — не попадают на main board.
     const groupedAppointments = useMemo(() => {
+        const visibleSet = new Set(KANBAN_VISIBLE_STATUSES);
         const groups: Record<string, Appointment[]> = {
             waitlist: [],
             new: [],
             confirmed: [],
             in_progress: [],
             completed: [],
-            cancelled: []
         };
-        appointments.forEach(appt => {
-            const status = appt.status.toLowerCase();
-            if (groups[status]) {
+        appointments
+            .filter((appt) => visibleSet.has(appt.status.toLowerCase()))
+            .forEach((appt) => {
+                const status = appt.status.toLowerCase();
                 groups[status].push(appt);
-            }
-        });
+            });
         return groups;
     }, [appointments]);
 

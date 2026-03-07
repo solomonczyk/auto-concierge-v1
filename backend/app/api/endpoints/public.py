@@ -328,15 +328,26 @@ async def create_public_appointment(
 
         async def notify():
             try:
-                msg = f"✅ <b>Запись подтверждена!</b>\n\n🔧 <b>Услуга:</b> {service.name}\n🕐 <b>Время:</b> {time_str}"
-                if payload.is_waitlist:
-                    msg = f"📝 <b>Лист ожидания</b>\n\n🔧 <b>Услуга:</b> {service.name}\n📅 <b>Дата:</b> {start_time_naive.strftime('%d.%m.%Y')}"
-
-                await NotificationService.send_booking_confirmation(payload.telegram_id, msg, payload.telegram_id)
-
+                recipient_roles = ["client"]
                 if not payload.is_waitlist and settings.ADMIN_CHAT_ID and str(settings.ADMIN_CHAT_ID) != str(payload.telegram_id):
-                    admin_msg = f"🆕 <b>Новая запись! (WebApp)</b>\n\n👤 {payload.full_name}\n🔧 {service.name}\n🕐 {time_str}"
-                    await NotificationService.notify_admin(admin_msg)
+                    recipient_roles.append("manager")
+                recipient_ids = {"client_telegram_id": payload.telegram_id}
+                if settings.ADMIN_CHAT_ID:
+                    recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
+                await NotificationService.dispatch(
+                    event_type="appointment_created",
+                    appointment_id=appt.id,
+                    tenant_id=tenant_id,
+                    recipient_roles=recipient_roles,
+                    recipient_ids=recipient_ids,
+                    context={
+                        "service_name": service.name,
+                        "slot_time": time_str,
+                        "date_str": start_time_naive.strftime("%d.%m.%Y"),
+                        "is_waitlist": payload.is_waitlist,
+                        "client_name": payload.full_name,
+                    },
+                )
             except Exception as e:
                 logger.error(f"Notification error: {e}")
 
