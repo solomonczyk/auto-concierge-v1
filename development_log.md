@@ -739,3 +739,62 @@ Status: pending removal.
 - Frontend: **migrated** to `?ticket=`.
 - Backend legacy `?token=`: **active** (pending removal after observation window).
 - Next: наблюдать `ws_legacy_auth_total`, при обнулении — удалить legacy path.
+
+---
+
+### Known test debt (not related to auth migration)
+
+9 pre-existing test failures — deprecated public booking endpoints, **не связаны** с WS/auth миграцией:
+
+| Файл | Тесты | Причина |
+|---|---|---|
+| `test_public_workflow.py` | 8 тестов | Endpoints `/services/public`, `/slots/public`, `/appointments/public` возвращают `410 Gone` / `401`. API мигрировано на slug-based multi-tenant routing, старые public endpoints отключены. |
+| `test_services.py` | `test_read_services` | `GET /services/` без auth → `401`. Тест не передаёт токен. |
+
+**Статус:** technical debt, не блокирует auth-миграцию.  
+**Action:** обновить или удалить эти тесты при рефакторинге public API / test suite cleanup.
+
+---
+
+### 2026-03-07 — Block 1+2: Legacy WS auth removed + typed auth layer
+
+#### Block 1: Legacy `?token=` removed
+
+1. **`backend/app/api/endpoints/ws.py`**:
+   - Удалён весь legacy fallback block (`?token=`, JWT decode, user lookup by username).
+   - Удалены импорты: `jose`, `JWTError`, `settings`, `select`, `async_session_local`, `User`.
+   - Удалены: `ws_legacy_auth_total` counter, `_increment_legacy_ws_auth_total()`.
+   - WS connect без `?ticket=` → `4401`.
+
+2. **`backend/tests/test_ws_ticket_ws_connect.py`**:
+   - Удалён `test_ws_connect_with_legacy_token_increments_counter`.
+   - Добавлен `test_ws_connect_without_ticket_returns_4401` — WS без ticket → 4401.
+   - Добавлен `test_ws_connect_with_legacy_token_returns_4401` — `?token=` → 4401 (regression guard).
+
+#### Block 2: Typed auth layer
+
+3. **`backend/app/models/ws_auth_context.py`** (новый файл):
+   - `WSAuthContext(BaseModel)`: `auth_type`, `user_id`, `tenant_id`, `role`, `jti`.
+   - `frozen=True` — immutable.
+
+4. **`backend/app/services/ws_ticket_service.py`**:
+   - `validate_ws_ticket()` возвращает `WSTicketClaims` (extends `WSAuthContext` + `exp`).
+   - Убран `dict[str, Any]` — все claims типизированы.
+
+5. **`backend/app/services/ws_auth_resolver.py`** (новый файл):
+   - `resolve_ws_auth(ticket=...)` → `WSAuthContext` или `WSAuthError(close_code)`.
+   - Инкапсулирует: validation, anti-replay, context creation.
+
+6. **`backend/app/api/endpoints/ws.py`** — стал тонким endpoint:
+   - Вызывает `resolve_ws_auth()`, обрабатывает `WSAuthError`.
+   - Вся auth логика — в resolver.
+
+7. **Обновлённые тесты**:
+   - `test_ws_ticket_service.py` — использует typed `WSTicketClaims` вместо dict access.
+   - 5/5 WS-тестов pass.
+
+#### Архитектурный итог:
+- `ws.py`: 45 строк, чистый transport layer.
+- `ws_auth_resolver.py`: единая точка auth resolution.
+- `WSAuthContext`: typed, frozen, нет магических строк.
+- Legacy `?token=`: **полностью удалён**.

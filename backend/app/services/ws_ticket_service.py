@@ -5,6 +5,7 @@ from uuid import uuid4
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from app.models.ws_auth_context import WSAuthContext
 
 WS_TICKET_TTL_SECONDS = 45
 WS_TICKET_TYPE = "ws_ticket"
@@ -15,8 +16,6 @@ class WSTicketValidationError(ValueError):
 
 
 def _get_ws_signing_key() -> str:
-    # For now we reuse SECRET_KEY.
-    # Later we can introduce a dedicated WS_TICKET_SECRET.
     return settings.SECRET_KEY
 
 
@@ -39,21 +38,33 @@ def create_ws_ticket(
     return jwt.encode(claims, _get_ws_signing_key(), algorithm=settings.ALGORITHM)
 
 
-def validate_ws_ticket(*, ticket: str) -> dict[str, Any]:
+class WSTicketClaims(WSAuthContext):
+    """Extends WSAuthContext with ticket-specific fields needed for anti-replay."""
+    exp: int
+    model_config = {"frozen": True}
+
+
+def validate_ws_ticket(*, ticket: str) -> WSTicketClaims:
     if not ticket:
         raise WSTicketValidationError("Missing ws ticket")
 
     try:
-        claims = jwt.decode(ticket, _get_ws_signing_key(), algorithms=[settings.ALGORITHM])
+        raw_claims = jwt.decode(ticket, _get_ws_signing_key(), algorithms=[settings.ALGORITHM])
     except JWTError as exc:
         raise WSTicketValidationError("Invalid ws ticket") from exc
 
     required_claims = ("type", "user_id", "tenant_id", "role", "exp", "jti")
-    missing = [name for name in required_claims if name not in claims]
+    missing = [name for name in required_claims if name not in raw_claims]
     if missing:
         raise WSTicketValidationError(f"Missing claims: {', '.join(missing)}")
 
-    if claims.get("type") != WS_TICKET_TYPE:
+    if raw_claims.get("type") != WS_TICKET_TYPE:
         raise WSTicketValidationError("Invalid ws ticket type")
 
-    return claims
+    return WSTicketClaims(
+        user_id=raw_claims["user_id"],
+        tenant_id=raw_claims["tenant_id"],
+        role=raw_claims["role"],
+        jti=raw_claims["jti"],
+        exp=raw_claims["exp"],
+    )
