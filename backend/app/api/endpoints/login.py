@@ -18,6 +18,7 @@ from app.core.csrf import (
 )
 from app.db.session import get_db
 from app.models.models import User, Tenant
+from app.services.audit_service import log_audit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -115,6 +116,18 @@ async def login_access_token(
         user.tenant_id,
         extra={"request_id": rid, "user_id": user.id, "tenant_id": user.tenant_id},
     )
+
+    await log_audit(
+        db,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.id,
+        action="login_success",
+        entity_type="auth",
+        entity_id=str(user.id),
+        payload_after={"username": user.username, "role": user.role.value if user.role else None},
+        source="api",
+    )
+    await db.commit()
 
     csrf_token = generate_csrf_token()
     max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60

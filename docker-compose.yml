@@ -16,6 +16,8 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-autoservice}
       - REDIS_HOST=redis
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
       - db
       - redis

@@ -27,6 +27,7 @@ from app.models.models import (
     Service,
     Tenant,
 )
+from app.services.audit_service import log_audit
 from app.services.redis_service import RedisService
 from app.services.usage_service import check_appointments_limit, LimitExceededError
 from fastapi import status
@@ -202,7 +203,11 @@ async def create_public_appointment(
         existing_appt = None
         if payload.appointment_id:
             stmt = select(Appointment).where(
-                and_(Appointment.id == payload.appointment_id, Appointment.tenant_id == tenant_id)
+                and_(
+                    Appointment.id == payload.appointment_id,
+                    Appointment.tenant_id == tenant_id,
+                    Appointment.deleted_at.is_(None),
+                )
             )
             result = await db.execute(stmt)
             existing_appt = result.scalar_one_or_none()
@@ -229,10 +234,18 @@ async def create_public_appointment(
         effective_tg_id = payload.telegram_id if payload.telegram_id else -(tenant_id * 1_000_000)
 
         stmt = select(Client).where(
-            and_(Client.telegram_id == effective_tg_id, Client.tenant_id == tenant_id)
+            and_(
+                Client.telegram_id == effective_tg_id,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
         )
         result = await db.execute(stmt)
         client = result.scalar_one_or_none()
+
+        client_is_new = False
+        client_before: Optional[dict] = None
+        client_updated = False
 
         if not client:
             client = Client(
@@ -246,7 +259,15 @@ async def create_public_appointment(
             )
             db.add(client)
             await db.flush()
+            client_is_new = True
         else:
+            client_before = {
+                "id": client.id,
+                "full_name": client.full_name,
+                "car_make": client.car_make,
+                "car_year": client.car_year,
+                "vin": client.vin,
+            }
             if payload.car_make:
                 client.car_make = payload.car_make
             if payload.car_year:
@@ -255,6 +276,10 @@ async def create_public_appointment(
                 client.vin = payload.vin
             if client.full_name == "Guest" and payload.full_name:
                 client.full_name = payload.full_name
+            client_updated = bool(
+                payload.car_make or payload.car_year or payload.vin
+                or (client_before["full_name"] == "Guest" and payload.full_name)
+            )
 
         # 7. Create/Update Appointment with Collision Protection
         end_time_naive = start_time_naive + timedelta(minutes=service.duration_minutes)
@@ -275,6 +300,7 @@ async def create_public_appointment(
                 stmt_collide = select(Appointment).where(
                     and_(
                         Appointment.shop_id == shop.id,
+                        Appointment.deleted_at.is_(None),
                         Appointment.status != AppointmentStatus.CANCELLED,
                         Appointment.status != AppointmentStatus.WAITLIST,
                         Appointment.start_time < end_time_utc,
@@ -295,7 +321,18 @@ async def create_public_appointment(
             AppointmentStatus.CONFIRMED if payload.appointment_id else AppointmentStatus.NEW
         )
 
+        appt_before: Optional[dict] = None
         if existing_appt:
+            appt_before = {
+                "id": existing_appt.id,
+                "service_id": existing_appt.service_id,
+                "start_time": existing_appt.start_time.isoformat() if existing_appt.start_time else None,
+                "end_time": existing_appt.end_time.isoformat() if existing_appt.end_time else None,
+                "status": existing_appt.status.value if existing_appt.status else None,
+                "car_make": existing_appt.car_make,
+                "car_year": existing_appt.car_year,
+                "vin": existing_appt.vin,
+            }
             existing_appt.service_id = payload.service_id
             existing_appt.start_time = start_time_utc
             existing_appt.end_time = end_time_utc
@@ -318,6 +355,69 @@ async def create_public_appointment(
                 vin=payload.vin,
             )
             db.add(appt)
+            await db.flush()
+
+        # Audit: client create/update
+        if client_is_new:
+            await log_audit(
+                db,
+                tenant_id=tenant_id,
+                actor_user_id=None,
+                action="create",
+                entity_type="client",
+                entity_id=str(client.id),
+                payload_after={"full_name": client.full_name, "car_make": client.car_make, "car_year": client.car_year, "vin": client.vin},
+                source="public",
+            )
+        elif client_updated and client_before:
+            await log_audit(
+                db,
+                tenant_id=tenant_id,
+                actor_user_id=None,
+                action="update",
+                entity_type="client",
+                entity_id=str(client.id),
+                payload_before=client_before,
+                payload_after={"full_name": client.full_name, "car_make": client.car_make, "car_year": client.car_year, "vin": client.vin},
+                source="public",
+            )
+
+        # Audit: appointment create/update
+        if existing_appt and appt_before:
+            await log_audit(
+                db,
+                tenant_id=tenant_id,
+                actor_user_id=None,
+                action="update",
+                entity_type="appointment",
+                entity_id=str(appt.id),
+                payload_before=appt_before,
+                payload_after={
+                    "service_id": appt.service_id,
+                    "start_time": appt.start_time.isoformat() if appt.start_time else None,
+                    "end_time": appt.end_time.isoformat() if appt.end_time else None,
+                    "status": appt.status.value if appt.status else None,
+                    "car_make": appt.car_make,
+                    "car_year": appt.car_year,
+                    "vin": appt.vin,
+                },
+                source="public",
+            )
+        else:
+            await log_audit(
+                db,
+                tenant_id=tenant_id,
+                actor_user_id=None,
+                action="create",
+                entity_type="appointment",
+                entity_id=str(appt.id),
+                payload_after={
+                    "service_id": appt.service_id,
+                    "start_time": appt.start_time.isoformat() if appt.start_time else None,
+                    "status": appt.status.value if appt.status else None,
+                },
+                source="public",
+            )
 
         await db.commit()
 
@@ -407,7 +507,11 @@ async def get_public_client_car_info(
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(Client).where(
-        and_(Client.telegram_id == telegram_id, Client.tenant_id == tenant_id)
+        and_(
+            Client.telegram_id == telegram_id,
+            Client.tenant_id == tenant_id,
+            Client.deleted_at.is_(None),
+        )
     )
     result = await db.execute(stmt)
     client = result.scalar_one_or_none()

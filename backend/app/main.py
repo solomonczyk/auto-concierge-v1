@@ -22,6 +22,29 @@ from app.bot.handlers import router as bot_router
 
 configure_logging()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+# Sentry: init only if DSN is set
+if getattr(settings, "SENTRY_DSN", None):
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.asyncio import AsyncioIntegration
+
+    def _before_send(event, hint):
+        # Mask sensitive data
+        if "request" in event:
+            for key in ("cookies", "headers", "data"):
+                if key in event.get("request", {}):
+                    event["request"][key] = "[Filtered]"
+        return event
+
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENVIRONMENT,
+        release=getattr(settings, "RELEASE_VERSION", None) or "auto-concierge@1.0",
+        integrations=[FastApiIntegration(), AsyncioIntegration()],
+        before_send=_before_send,
+        traces_sample_rate=0.1,
+    )
 logging.getLogger().setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 logging.getLogger("aiogram").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)

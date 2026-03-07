@@ -23,9 +23,14 @@ from app.core.metrics import (
 from app.bot.tenant import get_tenant_shop
 from app.schemas.appointment_history import AppointmentHistoryRead
 from app.services.usage_service import check_appointments_limit, LimitExceededError
+from app.services.audit_service import log_audit
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Exclude soft-deleted from normal queries
+_NOT_DELETED = Appointment.deleted_at.is_(None)
+_CLIENT_NOT_DELETED = Client.deleted_at.is_(None)
 router = APIRouter()
 
 class PublicBookingCreate(BaseModel):
@@ -119,9 +124,12 @@ async def update_appointment(
     id: int,
     appt_update: AppointmentUpdate,
     db: AsyncSession = Depends(get_db),
-    tenant_id: int = Depends(deps.get_current_tenant_id)
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
-    stmt = select(Appointment).where(and_(Appointment.id == id, Appointment.tenant_id == tenant_id))
+    stmt = select(Appointment).where(
+        and_(Appointment.id == id, Appointment.tenant_id == tenant_id, _NOT_DELETED)
+    )
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
     
@@ -160,6 +168,18 @@ async def update_appointment(
     result = await db.execute(stmt)
     appt = result.scalar_one()
     
+    await log_audit(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=current_user.id,
+        action="update",
+        entity_type="appointment",
+        entity_id=str(appt.id),
+        payload_after={"id": appt.id, "service_id": appt.service_id, "start_time": appt.start_time.isoformat()},
+        source="dashboard",
+    )
+    await db.commit()
+
     # Broadcast update
     redis = RedisService.get_redis()
     message = {
@@ -218,6 +238,7 @@ async def create_appointment(
         stmt = select(Appointment).where(
             and_(
                 Appointment.shop_id == shop_id,
+                Appointment.deleted_at.is_(None),
                 Appointment.status != AppointmentStatus.CANCELLED,
                 Appointment.start_time < end_time,
                 Appointment.end_time > appt.start_time
@@ -230,11 +251,18 @@ async def create_appointment(
                 detail="Slot already taken"
             )
 
-        stmt = select(Client).where(and_(Client.phone == appt.client_phone, Client.tenant_id == tenant_id))
+        stmt = select(Client).where(
+            and_(
+                Client.phone == appt.client_phone,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
         result = await db.execute(stmt)
         client = result.scalar_one_or_none()
-        
+        client_created = False
         if not client:
+            client_created = True
             client = Client(
                 tenant_id=tenant_id,
                 full_name=appt.client_name,
@@ -275,6 +303,27 @@ async def create_appointment(
             changed_by_user_id=current_user.id,
             source="dashboard",
         ))
+        await log_audit(
+            db,
+            tenant_id=tenant_id,
+            actor_user_id=current_user.id,
+            action="create",
+            entity_type="appointment",
+            entity_id=str(final_appt.id),
+            payload_after={"id": final_appt.id, "status": "new", "start_time": final_appt.start_time.isoformat()},
+            source="dashboard",
+        )
+        if client_created:
+            await log_audit(
+                db,
+                tenant_id=tenant_id,
+                actor_user_id=current_user.id,
+                action="create",
+                entity_type="client",
+                entity_id=str(client.id),
+                payload_after={"id": client.id, "full_name": client.full_name, "phone": client.phone},
+                source="dashboard",
+            )
         await db.commit()
 
         APPOINTMENTS_CREATED_TOTAL.labels(
@@ -332,7 +381,7 @@ async def update_appointment_status(
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
-    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
+    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
 
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
@@ -473,7 +522,7 @@ async def read_appointments(
     stmt = (
         select(Appointment)
         .options(joinedload(Appointment.client), joinedload(Appointment.service))
-        .where(Appointment.tenant_id == tenant_id)
+        .where(and_(Appointment.tenant_id == tenant_id, _NOT_DELETED))
         .offset(skip)
         .limit(fetch_limit)
     )
@@ -534,6 +583,7 @@ async def read_appointments_today(
                 Appointment.tenant_id == tenant_id,
                 Appointment.start_time >= day_start_utc,
                 Appointment.start_time < day_end_utc,
+                _NOT_DELETED,
             )
         )
         .order_by(Appointment.start_time.asc())
@@ -567,6 +617,7 @@ async def read_appointments_terminal(
                         AppointmentStatus.NO_SHOW,
                     )
                 ),
+                _NOT_DELETED,
             )
         )
         .order_by(Appointment.created_at.desc())
@@ -595,6 +646,7 @@ async def read_appointments_kanban(
             and_(
                 Appointment.tenant_id == tenant_id,
                 Appointment.status.in_(KANBAN_STATUSES),
+                _NOT_DELETED,
             )
         )
         .order_by(Appointment.start_time.asc())
@@ -642,7 +694,7 @@ async def read_appointment_history(
     rows = result.all()
 
     appt_stmt = select(Appointment).where(
-        and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id)
+        and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED)
     )
     appt_result = await db.execute(appt_stmt)
     if not appt_result.scalar_one_or_none():
@@ -674,7 +726,7 @@ async def read_appointment(
     stmt = (
         select(Appointment)
         .options(joinedload(Appointment.client), joinedload(Appointment.service))
-        .where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
+        .where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
     )
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
@@ -700,6 +752,7 @@ async def put_appointment(
         and_(
             Appointment.id == appointment_id,
             Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
         )
     )
     result = await db.execute(stmt)
@@ -774,30 +827,37 @@ async def delete_appointment(
     appointment_id: int,
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(deps.get_current_tenant_id),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """
-    Delete appointment by ID. Only within tenant scope.
-    Returns 204 No Content on success.
+    Soft-delete appointment by ID. Only within tenant scope.
+    Sets deleted_at, deleted_by. Returns 204 No Content on success.
     """
     stmt = select(Appointment).where(
         and_(
             Appointment.id == appointment_id,
             Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
         )
     )
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
-    await db.execute(
-        delete(AppointmentHistory).where(
-            and_(
-                AppointmentHistory.appointment_id == appointment_id,
-                AppointmentHistory.tenant_id == tenant_id,
-            )
-        )
+    payload_before = {"id": appt.id, "status": appt.status.value, "start_time": appt.start_time.isoformat()}
+    appt.deleted_at = datetime.now(tz.utc)
+    appt.deleted_by = current_user.id
+    await log_audit(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=current_user.id,
+        action="soft_delete",
+        entity_type="appointment",
+        entity_id=str(appt.id),
+        payload_before=payload_before,
+        payload_after=None,
+        source="dashboard",
     )
-    await db.delete(appt)
     await db.commit()
 
 

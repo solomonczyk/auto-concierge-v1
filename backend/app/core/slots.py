@@ -30,13 +30,14 @@ async def get_available_slots(
     start_datetime = datetime.combine(date, WORK_START).replace(tzinfo=tz.utc)
     end_datetime = datetime.combine(date, WORK_END).replace(tzinfo=tz.utc)
     
-    # 2. Fetch existing appointments for the shop on that day
+    # 2. Fetch existing appointments for the shop on that day (exclude soft-deleted)
     filters = [
         Appointment.shop_id == shop_id,
         Appointment.start_time >= start_datetime,
         Appointment.start_time < end_datetime,
         Appointment.status != AppointmentStatus.CANCELLED,
-        Appointment.status != AppointmentStatus.WAITLIST
+        Appointment.status != AppointmentStatus.WAITLIST,
+        Appointment.deleted_at.is_(None),
     ]
     if exclude_appointment_id:
         filters.append(Appointment.id != exclude_appointment_id)
@@ -71,7 +72,11 @@ async def get_available_slots(
         for appt in appointments:
             appt_start = appt.start_time
             appt_end = appt.end_time
-            
+            if appt_start.tzinfo is None:
+                appt_start = appt_start.replace(tzinfo=tz.utc)
+            if appt_end.tzinfo is None:
+                appt_end = appt_end.replace(tzinfo=tz.utc)
+
             if current_time < appt_end and slot_end > appt_start:
                 is_free = False
                 break

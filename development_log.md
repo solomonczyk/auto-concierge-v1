@@ -1468,3 +1468,37 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 | 16 | Rollback plan | DONE |
 | 17 | Полный regression прогон | DONE (53/53) |
 | 18 | E2E smoke (Playwright CI green) | DONE |
+
+## 2026-03-07 — Snapshot repo (frozen baseline)
+
+- Создан snapshot-репозиторий `auto-concierge-baseline-2026-03` как frozen-архив
+- Путь: `F:\Dev\Projects\auto-concierge-baseline-2026-03`
+- Экспорт через `git archive` из commit `b1bddbe`, дополнен `docs/BASELINE_MANIFEST.md` и `docs/APPOINTMENTS_WS_EVENT_CONTRACT.md`
+- README: Status Frozen/Read-only, Purpose Baseline restore point, Do not use for active development
+- Git init + initial commit `305aa82` (v1.0-core-baseline: frozen snapshot 2026-03-07)
+- GitHub CLI (gh) не установлен — репозиторий на GitHub нужно создать вручную
+
+## 2026-03-07 — Baseline manifest: правки под восстановимый паспорт
+
+- Обновлён `docs/BASELINE_MANIFEST.md` по замечаниям:
+  - Добавлен блок **0. Baseline status** (Frozen / Read-only, назначение, допустимые изменения)
+  - Дата baseline: `2026-03-07` (конкретная, не шаблон)
+  - Commit hash: `b1bddbe0d6c9661e31b7b70f7f826592aa5cc47f` (полный)
+  - Alembic head: `b7c8d9e0f1a2` (add_completed_at_to_appointments)
+  - Roles: только реальные в baseline — `superadmin`, `admin`, `manager`, `staff`
+  - Разделены **Known risks** на A. Included fixes и B. Operational requirements
+  - TELEGRAM_WEBHOOK_SECRET: «обязателен при webhook mode; не требуется для polling mode»
+  - Restore proof: добавлен блок **Restore inputs** (snapshot repo, docker image, db backup, env template, nginx config)
+  - Excludes: добавлен пункт про локальные secrets, production .env, private keys, сертификаты
+  - Includes: разбиты на Application / Infrastructure / Validation / Documentation scope
+  - Code snapshot → Read-only snapshot repo
+  - Вступление: «frozen-baseline», «связка code/runtime/data/docs»
+
+## 2026-03-07 — Stage 1 (P0) verification: миграция, Sentry, audit, client delete
+
+- **Миграция a1b2c3d4e5f6:** путь `backend/alembic/versions/a1b2c3d4e5f6_add_saas_plans_starter_business_enterprise.py`. Исправление: разбит INSERT на отдельный SELECT + INSERT (параметры `:n`, `:ma`, `:ms`), устранён AmbiguousParameterError (text vs varchar). `alembic upgrade head` проходит полностью.
+- **Миграция b2c3d4e5f6a7:** `add_audit_logs_and_soft_delete.py` — audit_logs, deleted_at/deleted_by на appointments и clients.
+- **Sentry:** добавлен `GET /api/v1/_sentry-test` (требует auth). При SENTRY_DSN: ставит tag `tenant_id`, вызывает `ValueError`. Верификация: задать SENTRY_DSN, вызвать endpoint с JWT, проверить событие в Sentry.
+- **Client delete flow:** `DELETE /clients/{id}` не существует. Клиенты через API не удаляются. Колонки deleted_at/deleted_by — для будущего. Защита: все выборки фильтруют `deleted_at.is_(None)`.
+- **Audit:** client create/update — `public.py`; appointment create/update/delete — `appointments.py`; appointment update в public — `public.py`; login success — `login.py`. Единый helper: `log_audit()` в `audit_service.py`, вызовы вручную в endpoints.
+- **entity_id:** `String(100)` — осознанно для универсальности (разные типы ID).

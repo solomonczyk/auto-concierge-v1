@@ -1,9 +1,10 @@
 from fastapi import APIRouter
-from app.api.endpoints import shops, services, appointments, slots, webhook, ws, login, clients, public, tenants, demo, ws_ticket, sla, features
+from app.api.endpoints import shops, services, appointments, slots, webhook, ws, login, clients, public, tenants, demo, ws_ticket, sla, features, _sentry_test
 
 api_router = APIRouter()
 
 api_router.include_router(login.router, tags=["login"])
+api_router.include_router(_sentry_test.router, tags=["_internal"])
 api_router.include_router(tenants.router, prefix="/tenants", tags=["tenants"])
 api_router.include_router(features.router, prefix="/features", tags=["features"])
 

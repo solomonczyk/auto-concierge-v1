@@ -105,7 +105,9 @@ class Client(Base):
     car_year: Mapped[Optional[int]] = mapped_column(Integer)
     vin: Mapped[Optional[str]] = mapped_column(String(17))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="clients")
     appointments: Mapped[List["Appointment"]] = relationship("Appointment", back_populates="client")
 
@@ -140,6 +142,8 @@ class Appointment(Base):
     car_year: Mapped[Optional[int]] = mapped_column(Integer)       # e.g. 2019
     vin: Mapped[Optional[str]] = mapped_column(String(17))         # 17-char VIN
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="appointments")
     shop: Mapped["Shop"] = relationship("Shop", back_populates="appointments")
@@ -176,3 +180,19 @@ class TenantSettings(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="settings")
+
+
+class AuditLog(Base):
+    """Universal audit log for entity changes. Minimal scope: appointments, clients, auth."""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tenants.id"), nullable=True, index=True)
+    actor_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)  # create, update, soft_delete
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)  # appointment, client, tenant_settings, auth
+    entity_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # id as string for flexibility
+    payload_before: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    payload_after: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="api")  # api, dashboard, bot, system
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

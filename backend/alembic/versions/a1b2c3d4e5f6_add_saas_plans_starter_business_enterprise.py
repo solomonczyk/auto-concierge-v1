@@ -18,20 +18,24 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     conn = op.get_bind()
-    # Insert starter, business, enterprise if not exist
+    # Insert starter, business, enterprise if not exist (split to avoid asyncpg param type ambiguity)
     for name, max_appt, max_shops in [
         ("starter", 50, 1),
         ("business", 500, 5),
         ("enterprise", 5000, 50),
     ]:
-        conn.execute(
-            sa.text(
-                "INSERT INTO tariff_plans (name, max_appointments, max_shops, is_active) "
-                "SELECT :name, :max_appt, :max_shops, true "
-                "WHERE NOT EXISTS (SELECT 1 FROM tariff_plans WHERE name = :name)"
-            ),
-            {"name": name, "max_appt": max_appt, "max_shops": max_shops},
-        )
+        exists = conn.execute(
+            sa.text("SELECT 1 FROM tariff_plans WHERE name = :n"),
+            {"n": name},
+        ).fetchone()
+        if not exists:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO tariff_plans (name, max_appointments, max_shops, is_active) "
+                    "VALUES (:n, :ma, :ms, true)"
+                ),
+                {"n": name, "ma": max_appt, "ms": max_shops},
+            )
     # Migrate existing tenants: free->starter, standard->business, pro->enterprise
     conn.execute(
         sa.text("""
