@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.redis_service import RedisService
 import asyncio
+import logging
 from jose import jwt, JWTError
 from app.core.config import settings
 from sqlalchemy import select
@@ -11,6 +12,14 @@ from app.services.ws_ticket_store import consume_jti_once
 from datetime import datetime, timezone
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+ws_legacy_auth_total = 0
+
+
+def _increment_legacy_ws_auth_total() -> int:
+    global ws_legacy_auth_total
+    ws_legacy_auth_total += 1
+    return ws_legacy_auth_total
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -53,7 +62,7 @@ async def websocket_endpoint(websocket: WebSocket):
             tenant_id = payload.get("tenant_id")
             username = payload.get("sub")
             ws_auth_context = {
-                "auth_type": "token",
+                "auth_type": "legacy_token_ws",
                 "user_id": None,
                 "tenant_id": tenant_id,
                 "role": payload.get("role"),
@@ -77,6 +86,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 ws_auth_context["user_id"] = user.id
                 ws_auth_context["tenant_id"] = user.tenant_id
                 ws_auth_context["role"] = user.role.value if user.role else None
+
+        metric_value = _increment_legacy_ws_auth_total()
+        logger.warning(
+            "WS legacy auth used (?token=...). This path is deprecated.",
+            extra={
+                "user_id": ws_auth_context.get("user_id"),
+                "tenant_id": tenant_id,
+                "auth_type": ws_auth_context.get("auth_type"),
+                "metric_name": "ws_legacy_auth_total",
+                "metric_value": metric_value,
+            },
+        )
 
     if tenant_id is None:
         await websocket.close(code=4403)

@@ -74,3 +74,31 @@ async def test_ws_connect_with_ticket_success(
             with sync_client.websocket_connect(f"{settings.API_V1_STR}/ws?ticket={ws_ticket}"):
                 pass
         assert exc.value.code == 4403
+
+
+@pytest.mark.asyncio
+async def test_ws_connect_with_legacy_token_increments_counter(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    login_response = await client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": "admin", "password": "admin"},
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert login_response.status_code == 200
+    access_token = login_response.json()["access_token"]
+
+    dummy_redis = _DummyRedis()
+    monkeypatch.setattr(
+        ws_endpoint.RedisService,
+        "get_redis",
+        staticmethod(lambda: dummy_redis),
+    )
+
+    ws_endpoint.ws_legacy_auth_total = 0
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(f"{settings.API_V1_STR}/ws?token={access_token}"):
+            pass
+
+    assert ws_endpoint.ws_legacy_auth_total == 1

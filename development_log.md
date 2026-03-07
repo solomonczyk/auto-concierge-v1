@@ -678,3 +678,64 @@ useEffect(() => { if (isAuthenticated) navigate("/", { replace: true }); }, [isA
     - 1-й connect по ticket успешен;
     - 2-й connect тем же ticket закрывается с `4403`.
   - Результат: `pytest tests/test_ws_ticket_ws_connect.py -k ticket_success -q` -> `1 passed`.
+
+---
+
+### 2026-03-06 — Legacy WS auth usage metric
+
+- В `backend/app/api/endpoints/ws.py` добавлен простой счётчик `ws_legacy_auth_total`.
+- Инкремент (`_increment_legacy_ws_auth_total`) выполняется только в legacy path (`?token=...`).
+- В warning-лог legacy path добавлены structured fields:
+  - `metric_name="ws_legacy_auth_total"`
+  - `metric_value=<current_counter>`
+- Ticket path (`?ticket=...`) счётчик не затрагивает.
+- Добавлен тест `test_ws_connect_with_legacy_token_increments_counter`:
+  - legacy WS connect проходит;
+  - `ws_legacy_auth_total` увеличивается до `1`.
+- Результат: `pytest tests/test_ws_ticket_ws_connect.py -k legacy_token_increments_counter -q` -> `1 passed`.
+
+---
+
+### 2026-03-07 — WebSocket legacy token auth deprecated
+
+Legacy WS auth via `?token=...` is deprecated.  
+Preferred path: `?ticket=...`.  
+Legacy fallback remains temporarily for rollout safety.  
+Removal condition: frontend migration completed + observation window with `ws_legacy_auth_total`.  
+Status: pending removal.
+
+---
+
+### 2026-03-07 — Block A: Frontend WS auth migrated to ticket
+
+**Цель**: переключить frontend с `?token=<JWT>` на `?ticket=<ws_ticket>` для WebSocket.
+
+#### Изменения:
+
+1. **`frontend/src/App.tsx`**:
+   - Убрана переменная `wsToken = localStorage.getItem('token')`.
+   - WS URL формируется без `?token=...` — передаётся чистый базовый URL.
+   - `APP_VERSION` обновлён до `1.1.0`.
+
+2. **`frontend/src/contexts/WebSocketContext.tsx`**:
+   - Добавлена функция `fetchWsTicket()` — вызывает `POST /api/v1/ws-ticket` через `api`.
+   - `connect()` стал `async`: перед каждым подключением получает свежий ticket.
+   - WS подключается через `?ticket=<ticket>`.
+   - При reconnect (включая close codes `4401`/`4403`) — запрашивается новый ticket.
+   - Старый ticket никогда не переиспользуется.
+   - При ошибке получения ticket — exponential backoff reconnect.
+
+3. **`frontend/src/contexts/WebSocketContext.test.tsx`**:
+   - Обновлён unit-тест: мокает `api.post('/ws-ticket')`.
+   - Тест 1: `fetchWsTicket` вызывается, WS URL содержит `?ticket=`, не содержит `?token=`.
+   - Тест 2: при disconnect (code 4401) — новый ticket запрашивается, новый WS создаётся с другим URL.
+   - Результат: `2 passed`.
+
+#### Backend (без изменений):
+- Legacy `?token=` path в `ws.py` остаётся как fallback для безопасного rollout.
+- `ws_legacy_auth_total` counter продолжает работать для наблюдения.
+
+#### Статус миграции:
+- Frontend: **migrated** to `?ticket=`.
+- Backend legacy `?token=`: **active** (pending removal after observation window).
+- Next: наблюдать `ws_legacy_auth_total`, при обнулении — удалить legacy path.
