@@ -36,7 +36,7 @@ jobs:
           PLAYWRIGHT_ADMIN_USER: ${{ vars.PLAYWRIGHT_ADMIN_USER || 'admin' }}
           PLAYWRIGHT_ADMIN_PASS: ${{ secrets.PLAYWRIGHT_ADMIN_PASS }}
           PLAYWRIGHT_SLUG: ${{ vars.PLAYWRIGHT_SLUG || 'auto-concierge' }}
-        run: npx playwright test
+        run: npx playwright test --reporter=list
 
       - name: Upload Playwright report
         if: failure()
