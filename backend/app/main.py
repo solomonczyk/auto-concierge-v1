@@ -59,7 +59,9 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         }
     )
 
-# Set all CORS enabled origins
+if settings.is_production and ("*" in settings.BACKEND_CORS_ORIGINS):
+    raise ValueError("Wildcard CORS origin is not allowed with credentials in production!")
+
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,

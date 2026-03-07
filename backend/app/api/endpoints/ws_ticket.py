@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.api import deps
+from app.core.rate_limit import limiter
 from app.models.models import User
 from app.services.ws_ticket_service import WS_TICKET_TTL_SECONDS, create_ws_ticket
 
@@ -15,7 +16,9 @@ class WSTicketResponse(BaseModel):
 
 
 @router.post("/ws-ticket", response_model=WSTicketResponse)
+@limiter.limit("30/minute")
 async def issue_ws_ticket(
+    request: Request,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> WSTicketResponse:
     if current_user.tenant_id is None:

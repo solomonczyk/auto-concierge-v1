@@ -111,6 +111,8 @@ class Settings(BaseSettings):
             self.ENCRYPTION_KEY = get_env_encryption_key()
         if self.is_production and not self.TELEGRAM_WEBHOOK_SECRET:
             raise ValueError("TELEGRAM_WEBHOOK_SECRET must be set in production environment!")
+        if self.is_production and not self.ENCRYPTION_KEY:
+            raise ValueError("ENCRYPTION_KEY must be set in production environment!")
 
     class Config:
         case_sensitive = True

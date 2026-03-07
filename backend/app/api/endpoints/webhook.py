@@ -1,7 +1,8 @@
 import secrets
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from aiogram.types import Update
 from app.services.redis_service import RedisService
+from app.core.rate_limit import limiter
 
 from app.bot.loader import bot, dp
 from app.core.config import settings
@@ -9,7 +10,9 @@ from app.core.config import settings
 router = APIRouter()
 
 @router.post("/webhook")
+@limiter.limit("120/minute")
 async def bot_webhook(
+    request: Request,
     update: dict,
     x_telegram_bot_api_secret_token: str | None = Header(default=None)
 ):

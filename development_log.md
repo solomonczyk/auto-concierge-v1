@@ -861,3 +861,35 @@ Status: pending removal.
 - Cookie не передаётся по HTTP в production (`Secure`).
 - CSRF protection через `SameSite=Lax`.
 - `localStorage` полностью очищен от token-ов.
+
+---
+
+### 2026-03-07 — Security hardening: rate limiting, logging audit, secrets/CORS
+
+#### Rate limiting:
+
+| Endpoint | Лимит | Метод |
+|---|---|---|
+| `POST /login/access-token` | `10/minute` по IP | `slowapi` (уже было) |
+| `POST /ws-ticket` | `30/minute` по IP | `slowapi` (добавлено) |
+| `POST /webhook` | `120/minute` по IP | `slowapi` (добавлено) |
+| Public endpoints | `10-60/minute` по IP | `slowapi` (уже было) |
+
+#### Logging policy audit:
+
+- `log_requests` middleware: логирует только `method path → status` — без query params, headers, body.
+- Ни один endpoint не логирует JWT, ws-ticket, cookie, Authorization header, webhook secret.
+- Error handlers не логируют request bodies.
+- **Вывод**: утечки чувствительных данных в логах нет.
+
+#### Secrets/config hardening:
+
+| Проверка | Статус |
+|---|---|
+| `SECRET_KEY` mandatory in prod | OK (ValueError) |
+| `TELEGRAM_WEBHOOK_SECRET` mandatory in prod | OK (ValueError) |
+| `ENCRYPTION_KEY` mandatory in prod | **добавлено** (ValueError) |
+| `BACKEND_CORS_ORIGINS` no wildcard with credentials in prod | **добавлено** (ValueError) |
+| `POSTGRES_*` / `REDIS_HOST` required | OK (no defaults) |
+| CORS `allow_credentials=True` | OK |
+| CORS origin whitelist (no `*`) | OK |
