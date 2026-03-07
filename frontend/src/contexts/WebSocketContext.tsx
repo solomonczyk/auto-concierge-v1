@@ -26,6 +26,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ url, child
     const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
     const heartbeatTimer = useRef<ReturnType<typeof setInterval> | null>(null)
     const reconnectAttempts = useRef(0)
+    const MAX_RECONNECT_ATTEMPTS = 15
     const isUnmounted = useRef(false)
 
     useEffect(() => {
@@ -39,6 +40,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ url, child
 
         const scheduleReconnect = () => {
             if (isUnmounted.current) return
+            if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+                console.warn('WS max reconnect attempts reached, giving up')
+                return
+            }
             const delay = Math.min(1000 * (2 ** reconnectAttempts.current), 10000)
             reconnectAttempts.current += 1
             reconnectTimer.current = setTimeout(() => { connect() }, delay)

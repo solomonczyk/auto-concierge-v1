@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from app.api import deps
 from app.core.rate_limit import limiter
+from app.core.metrics import WS_TICKET_ISSUED_TOTAL, WS_TICKET_REJECTED_TOTAL
 from app.models.models import User
 from app.services.ws_ticket_service import WS_TICKET_TTL_SECONDS, create_ws_ticket
 
@@ -22,6 +23,7 @@ async def issue_ws_ticket(
     current_user: User = Depends(deps.get_current_active_user),
 ) -> WSTicketResponse:
     if current_user.tenant_id is None:
+        WS_TICKET_REJECTED_TOTAL.labels(reason="no_tenant").inc()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant context required for ws ticket",
@@ -32,6 +34,7 @@ async def issue_ws_ticket(
         tenant_id=current_user.tenant_id,
         role=current_user.role.value,
     )
+    WS_TICKET_ISSUED_TOTAL.labels(tenant_id=str(current_user.tenant_id)).inc()
     return WSTicketResponse(
         ticket=ticket,
         expires_in=WS_TICKET_TTL_SECONDS,

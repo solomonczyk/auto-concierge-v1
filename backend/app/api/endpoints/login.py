@@ -1,9 +1,12 @@
+import logging
 from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+
 from app.core.rate_limit import limiter
 from app.api import deps
 from app.core import security
@@ -12,6 +15,7 @@ from app.db.session import get_db
 from app.models.models import User, Tenant
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 AUTH_COOKIE_NAME = "access_token"
 
@@ -28,6 +32,7 @@ def _cookie_kwargs() -> dict:
 
 @router.get("/me")
 async def get_me(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(deps.get_current_active_user),
 ) -> dict:
@@ -45,6 +50,14 @@ async def get_me(
         tenant = row.scalar_one_or_none()
         if tenant:
             result["tenant_slug"] = tenant.slug
+
+    rid = getattr(request.state, "request_id", "-")
+    logger.info(
+        "auth.me user_id=%s tenant_id=%s",
+        user.id,
+        user.tenant_id,
+        extra={"request_id": rid, "user_id": user.id, "tenant_id": user.tenant_id},
+    )
     return result
 
 
@@ -59,9 +72,21 @@ async def login_access_token(
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
+    rid = getattr(request.state, "request_id", "-")
+
     if not user or not security.verify_password(form_data.password, user.hashed_password):
+        logger.warning(
+            "auth.login_failed username=%s",
+            form_data.username,
+            extra={"request_id": rid, "event_type": "auth_reject"},
+        )
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     if not user.is_active:
+        logger.warning(
+            "auth.login_inactive user_id=%s",
+            user.id,
+            extra={"request_id": rid, "user_id": user.id, "event_type": "auth_reject"},
+        )
         raise HTTPException(status_code=400, detail="Inactive user")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -70,6 +95,13 @@ async def login_access_token(
         role=user.role.value,
         tenant_id=user.tenant_id,
         expires_delta=access_token_expires,
+    )
+
+    logger.info(
+        "auth.login_ok user_id=%s tenant_id=%s",
+        user.id,
+        user.tenant_id,
+        extra={"request_id": rid, "user_id": user.id, "tenant_id": user.tenant_id},
     )
 
     response = JSONResponse(content={"status": "ok"})
@@ -82,7 +114,9 @@ async def login_access_token(
 
 
 @router.post("/auth/logout")
-async def logout():
+async def logout(request: Request):
+    rid = getattr(request.state, "request_id", "-")
+    logger.info("auth.logout", extra={"request_id": rid})
     response = JSONResponse(content={"status": "ok"})
     response.delete_cookie(**_cookie_kwargs())
     return response

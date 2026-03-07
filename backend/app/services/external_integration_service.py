@@ -62,13 +62,27 @@ class ExternalIntegrationService:
             tenant = (await db.execute(stmt_tenant)).scalar_one_or_none()
             
             if not appt or not tenant:
-                logger.error(f"Sync failed: Appointment {appointment_id} or Tenant {tenant_id} not found")
+                logger.error(
+                    "integration.sync_not_found appointment=%s tenant=%s",
+                    appointment_id,
+                    tenant_id,
+                    extra={
+                        "event_type": "integration_failure",
+                        "tenant_id": tenant_id,
+                    },
+                )
                 return False
 
             if appt.tenant_id != tenant_id:
                 logger.error(
-                    "Sync rejected: appointment %s belongs to tenant %s, not %s",
-                    appointment_id, appt.tenant_id, tenant_id,
+                    "integration.tenant_mismatch appointment=%s owner=%s requested=%s",
+                    appointment_id,
+                    appt.tenant_id,
+                    tenant_id,
+                    extra={
+                        "event_type": "tenant_isolation_reject",
+                        "tenant_id": tenant_id,
+                    },
                 )
                 return False
                 

@@ -14,6 +14,11 @@ from app.services.redis_service import RedisService
 from app.services.external_integration_service import external_integration
 from app.core.config import settings
 from app.core.slots import get_available_slots
+from app.core.metrics import (
+    APPOINTMENTS_CREATED_TOTAL,
+    APPOINTMENTS_CREATION_FAILED_TOTAL,
+    APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL,
+)
 from app.bot.tenant import get_tenant_shop
 from pydantic import BaseModel
 
@@ -254,16 +259,22 @@ async def create_appointment(
         result = await db.execute(stmt)
         final_appt = result.scalar_one()
         
-        # 3. External Integration Hook (Hardened: Persistent Redis Queue)
+        APPOINTMENTS_CREATED_TOTAL.labels(
+            tenant_id=str(tenant_id), source="dashboard"
+        ).inc()
+
         try:
             external_integration.enqueue_appointment(final_appt.id, tenant_id)
         except Exception as integration_error:
+            APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL.labels(
+                tenant_id=str(tenant_id)
+            ).inc()
             logger.error(
                 "External integration enqueue failed for appointment %s: %s",
                 final_appt.id,
                 integration_error,
             )
-        
+
         return final_appt
         
     finally:
@@ -575,7 +586,10 @@ async def create_public_appointment(
         result = await db.execute(stmt)
         appt = result.scalar_one()
 
-        # 7. Notifications
+        APPOINTMENTS_CREATED_TOTAL.labels(
+            tenant_id=str(tenant_id), source="public"
+        ).inc()
+
         from app.services.notification_service import NotificationService
         import asyncio
 

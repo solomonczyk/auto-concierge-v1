@@ -922,3 +922,70 @@ Status: pending removal.
 - `test_create_service_admin` мигрирован на cookie-based auth (pre-existing debt).
 
 **Тесты**: 31/31 passed (excluding known debt: `test_public_workflow`, `test_read_services`).
+
+### 2026-03-07 — Observability: metrics, request_id, structured logging
+
+#### 1. Prometheus metrics (`backend/app/core/metrics.py`)
+
+Новый модуль, все counters/histograms централизованы:
+
+| Метрика | Labels | Где инкрементируется |
+|---|---|---|
+| `ws_connections_total` | `tenant_id` | `ws.py` — после accept |
+| `ws_disconnect_total` | `tenant_id` | `ws.py` — при WebSocketDisconnect |
+| `ws_auth_rejected_total` | `reason` (no_ticket/invalid_ticket/replay) | `ws.py` — при WSAuthError |
+| `ws_ticket_issued_total` | `tenant_id` | `ws_ticket.py` — после создания |
+| `ws_ticket_rejected_total` | `reason` (no_tenant) | `ws_ticket.py` — при 403 |
+| `appointments_created_total` | `tenant_id`, `source` (dashboard/public) | `appointments.py` |
+| `appointments_external_sync_failed_total` | `tenant_id` | `appointments.py` — при ошибке enqueue |
+| `webhook_requests_total` | — | `webhook.py` — при входе |
+| `webhook_rejected_total` | `reason` (no_secret/forbidden) | `webhook.py` |
+| `webhook_processed_total` | — | `webhook.py` — после feed_update |
+| `http_request_duration_seconds` | `method`, `path`, `status` | middleware |
+
+Endpoint: `GET /metrics` → Prometheus text format.
+
+Зависимость: `prometheus-client>=0.20.0` добавлена в `requirements.txt`.
+
+#### 2. request_id middleware (`backend/app/main.py`)
+
+- Каждый HTTP-запрос получает `X-Request-ID` (из заголовка или UUID).
+- `request.state.request_id` доступен во всех handlers.
+- Заголовок возвращается в response.
+
+#### 3. Structured logging
+
+Все ключевые endpoints получили structured `extra`:
+
+| Endpoint | Поля в extra |
+|---|---|
+| `POST /login/access-token` | `request_id`, `user_id`, `tenant_id`, `event_type` |
+| `GET /me` | `request_id`, `user_id`, `tenant_id` |
+| `POST /auth/logout` | `request_id` |
+| WS auth resolver | `event_type` (auth_reject / security_warning / ws_connect), `auth_type`, `user_id`, `tenant_id` |
+| External integration | `event_type` (integration_failure / tenant_isolation_reject), `tenant_id` |
+| Request log middleware | `request_id`, `tenant_id`, `method`, `path`, `status`, `elapsed_s` |
+
+#### Warning/error taxonomy:
+
+| event_type | Смысл |
+|---|---|
+| `auth_reject` | Неуспешная аутентификация |
+| `security_warning` | Replay attack, подозрительная активность |
+| `ws_connect` | Успешное WS подключение |
+| `integration_failure` | Сбой внешней интеграции |
+| `tenant_isolation_reject` | Попытка cross-tenant доступа |
+
+#### 4. Frontend: WS reconnect discipline
+
+- Добавлен `MAX_RECONNECT_ATTEMPTS = 15` в `WebSocketContext.tsx`.
+- После 15 неудачных попыток reconnect прекращается.
+- Exponential backoff: 1s → 2s → 4s → ... → 10s (cap).
+
+#### 5. Production readiness документы
+
+- `PRODUCTION_CHECKLIST.md` — env vars, DB, Redis, Telegram, auth, metrics, degradation.
+- `KNOWN_DEBT.md` — pre-existing test failures, code quality, architecture stubs.
+- `ROLLBACK_PLAN.md` — webhook disable, migration rollback, external integration off, Redis failure, code rollback, auth fallback.
+
+**Тесты**: 31/31 backend passed. Frontend: TypeScript `tsc --noEmit` clean.
