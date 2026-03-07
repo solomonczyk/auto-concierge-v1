@@ -1008,3 +1008,14 @@ Endpoint: `GET /metrics` → Prometheus text format.
 **Инструмент**: `pytest` + `httpx.AsyncClient` + `starlette.testclient.TestClient` (WS).
 
 **Полный regression**: 32/32 passed (excluding known debt).
+
+### 2026-03-07 — Fix: E2E Playwright CI compatibility (cookie + legacy auth)
+
+**Проблема**: Все 9 GitHub Actions E2E (Playwright) runs красные.
+
+**Причина**: `loginAsAdmin` ожидает cookie-based auth (новый backend), а production backend **не был передеплоен** — всё ещё возвращает `{"access_token": "..."}` без `Set-Cookie`. Все тесты зависят от auth → каскадный fail.
+
+**Решение**: `frontend/e2e/helpers/auth.ts` — dual-mode login:
+- Если backend возвращает `{ access_token }` (legacy) → вручную добавляем cookie через `page.context().addCookies()`.
+- Если backend ставит `Set-Cookie` (new) → браузер подхватывает автоматически.
+- Результат: E2E работает с обоими вариантами backend до завершения production deploy.

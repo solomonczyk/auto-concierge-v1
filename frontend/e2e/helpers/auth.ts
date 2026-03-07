@@ -5,9 +5,11 @@ const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
 
 /**
- * Login via API — cookie is set automatically in the browser context.
- * page.request shares cookie jar with the browser, so Set-Cookie
- * from the login response is available for subsequent page.goto().
+ * Login via API — supports both cookie-based and legacy JSON-token auth.
+ *
+ * Cookie-based (new): backend sets Set-Cookie, browser picks it up.
+ * Legacy JSON (old):  backend returns { access_token }, we inject it
+ *                     as a cookie manually so the SPA can read it.
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
   const apiUrl = `${baseURL.replace(/\/$/, '')}/concierge/api/v1/login/access-token`
@@ -18,6 +20,24 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   if (res.status() !== 200) {
     throw new Error(`Login API returned ${res.status()}`)
   }
+
+  const body = await res.json()
+
+  if (body.access_token) {
+    const domain = new URL(baseURL).hostname
+    await page.context().addCookies([
+      {
+        name: 'access_token',
+        value: body.access_token,
+        domain,
+        path: '/',
+        httpOnly: true,
+        secure: baseURL.startsWith('https'),
+        sameSite: 'Lax',
+      },
+    ])
+  }
+
   await page.goto('/concierge/')
   await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
 }
