@@ -1019,3 +1019,10 @@ Endpoint: `GET /metrics` → Prometheus text format.
 - Если backend возвращает `{ access_token }` (legacy) → вручную добавляем cookie через `page.context().addCookies()`.
 - Если backend ставит `Set-Cookie` (new) → браузер подхватывает автоматически.
 - Результат: E2E работает с обоими вариантами backend до завершения production deploy.
+
+**Итерация 2**: `loginAsAdmin` — добавлен `addInitScript(localStorage.setItem('token'))` для legacy frontend на production.
+- Production frontend ещё использует `localStorage` для auth state.
+- Cookie устанавливается для нового фронта, `localStorage` — для старого.
+- Screenshot подтвердил: production показывал страницу логина после `page.goto('/concierge/')` несмотря на cookie.
+
+**Локальная проверка против production**: 5 passed, 2 skipped (webhook secret).

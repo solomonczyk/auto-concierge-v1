@@ -36,6 +36,9 @@ export async function loginAsAdmin(page: Page): Promise<void> {
         sameSite: 'Lax',
       },
     ])
+    // Legacy frontend reads token from localStorage
+    const token = body.access_token
+    await page.addInitScript((t) => { localStorage.setItem('token', t) }, token)
   }
 
   await page.goto('/concierge/')
