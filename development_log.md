@@ -989,3 +989,22 @@ Endpoint: `GET /metrics` → Prometheus text format.
 - `ROLLBACK_PLAN.md` — webhook disable, migration rollback, external integration off, Redis failure, code rollback, auth fallback.
 
 **Тесты**: 31/31 backend passed. Frontend: TypeScript `tsc --noEmit` clean.
+
+### 2026-03-07 — E2E smoke test: full client journey
+
+**Файл**: `backend/tests/test_smoke_e2e.py`
+
+**Сценарий `test_full_client_journey`** — 6 шагов:
+
+| Step | Что проверяет | Результат |
+|---|---|---|
+| 1 | `POST /login/access-token` → cookie set | PASS |
+| 2 | `GET /me` → username, tenant_id, role | PASS |
+| 3 | `POST /appointments/` → запись создана | PASS |
+| 4 | `GET /appointments/{id}` → запись сохранилась (external sync fail-safe) | PASS |
+| 5 | WS connect → pubsub на `appointments_updates:{tenant_id}` | PASS |
+| 6 | Webhook → update processed, feed_update вызван | PASS |
+
+**Инструмент**: `pytest` + `httpx.AsyncClient` + `starlette.testclient.TestClient` (WS).
+
+**Полный regression**: 32/32 passed (excluding known debt).
