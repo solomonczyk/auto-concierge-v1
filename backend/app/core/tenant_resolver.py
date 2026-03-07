@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.models import Tenant
+from app.core.context import tenant_id_context
 
 
 async def get_tenant_id_by_slug(
@@ -14,4 +15,5 @@ async def get_tenant_id_by_slug(
     tenant = result.scalar_one_or_none()
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Автосервис '{slug}' не найден")
+    tenant_id_context.set(tenant.id)
     return tenant.id

@@ -64,6 +64,13 @@ class ExternalIntegrationService:
             if not appt or not tenant:
                 logger.error(f"Sync failed: Appointment {appointment_id} or Tenant {tenant_id} not found")
                 return False
+
+            if appt.tenant_id != tenant_id:
+                logger.error(
+                    "Sync rejected: appointment %s belongs to tenant %s, not %s",
+                    appointment_id, appt.tenant_id, tenant_id,
+                )
+                return False
                 
             return await ExternalIntegrationService._sync_data(appt, tenant)
 

@@ -893,3 +893,32 @@ Status: pending removal.
 | `POSTGRES_*` / `REDIS_HOST` required | OK (no defaults) |
 | CORS `allow_credentials=True` | OK |
 | CORS origin whitelist (no `*`) | OK |
+
+### 2026-03-07 — Tenant isolation: закрытие 3 medium-рисков из аудита
+
+#### Аудит выявил:
+
+| # | Риск | Severity |
+|---|---|---|
+| 1 | `GET /slots/available` не проверяет принадлежность `shop_id` к текущему tenant | Medium |
+| 2 | Public endpoints (`get_tenant_id_by_slug`) не устанавливают `tenant_id_context` | Medium |
+| 3 | `_sync_by_ids` запрашивает appointment по ID без фильтра `tenant_id` | Medium |
+
+#### Исправления:
+
+**1. `backend/app/api/endpoints/slots.py`**
+- Добавлен `Depends(get_current_tenant_id)`.
+- Перед возвратом слотов: `SELECT shop WHERE id = shop_id AND tenant_id = current_tenant` — если не найден, 404.
+
+**2. `backend/app/core/tenant_resolver.py`**
+- После успешного `SELECT tenant WHERE slug = ...` добавлен `tenant_id_context.set(tenant.id)`.
+- Теперь все downstream зависимости (RLS, deps) видят корректный tenant context.
+
+**3. `backend/app/services/external_integration_service.py`**
+- В `_sync_by_ids`: после загрузки appointment проверяется `appt.tenant_id != tenant_id` → reject + error log.
+- Защита от cross-tenant sync при компрометации очереди задач.
+
+**Бонус: `backend/tests/test_services.py`**
+- `test_create_service_admin` мигрирован на cookie-based auth (pre-existing debt).
+
+**Тесты**: 31/31 passed (excluding known debt: `test_public_workflow`, `test_read_services`).
