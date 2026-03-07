@@ -1099,3 +1099,59 @@ no_show → (terminal)
 - `current_user` dependency добавлен для role checking.
 
 **Тесты**: 21 новых (state machine) + 32 existing = 53/53 passed.
+
+---
+
+## Roadmap: порядок реализации
+
+### Блок A. Продуктовая логика (in progress)
+
+| # | Задача | Статус |
+|---|---|---|
+| 1 | Определить lifecycle статусов | DONE |
+| 2 | Server-side state machine + role guards | DONE |
+| 3 | Kanban API (GET by date, PATCH status) | DONE (existed) |
+| 4 | WS обновления (typed events) | DONE |
+| 5 | SLA таймеры (confirmation timeout, auto no_show) | DONE |
+| 6 | Audit trail (`appointment_history`) | DONE |
+| 7 | Уведомления менеджеру + клиенту | PENDING |
+| 8 | Операторский dashboard | PENDING |
+
+### Блок B. Infra prerequisite: nginx refactor (before domain/subdomain rollout)
+
+**Решение**: текущий nginx конфиг (`/etc/nginx/sites-enabled/studio-ai-site`) пережил много ручных правок и стал точкой накопления хаоса. Перед выносом concierge на отдельный entrypoint (поддомен / домен) нужна чистая конфигурационная структура.
+
+**Целевая структура:**
+
+```
+/etc/nginx/sites-enabled/
+├── studio-ai-site.conf   — основной сайт (bt-aistudio.ru)
+├── concierge.conf         — приложение Auto-Concierge (API + frontend)
+└── redirects.conf         — все редиректы и служебная маршрутизация
+```
+
+**Порядок выполнения:**
+
+| # | Задача | Статус |
+|---|---|---|
+| 9 | Нормализовать nginx — разобрать текущий монолит | PENDING |
+| 10 | Разделить конфиги по зонам: site / concierge / redirects | PENDING |
+| 11 | Подключить отдельный entrypoint для concierge | PENDING |
+| 12 | Проверить SSL / redirects / proxy rules | PENDING |
+| 13 | Перевести concierge на отдельный hostname (concierge.bt-aistudio.ru или другой) | PENDING |
+
+**Почему до публикации, а не после:**
+- Меньше риск сломать основной сайт при правках concierge.
+- Проще дебажить — один файл = одна зона ответственности.
+- Проще выпускать SSL и менять маршруты.
+- Проще масштабировать (api, app, admin, demo — каждый в своём конфиге).
+
+### Блок C. Production readiness
+
+| # | Задача | Статус |
+|---|---|---|
+| 14 | Production checklist | DONE |
+| 15 | Known debt list | DONE |
+| 16 | Rollback plan | DONE |
+| 17 | Полный regression прогон | DONE (53/53) |
+| 18 | E2E smoke (Playwright CI green) | DONE |
