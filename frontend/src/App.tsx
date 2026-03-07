@@ -9,14 +9,15 @@ import ClientsPage from '@/pages/ClientsPage'
 import SettingsPage from '@/pages/SettingsPage'
 
 function RequireAuth() {
-    const { isAuthenticated } = useAuth();
-    return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
+    const { isAuthenticated, isLoading } = useAuth()
+    if (isLoading) return null
+    return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />
 }
 
 import { WebSocketProvider } from '@/contexts/WebSocketContext'
 
 function App() {
-    console.log("APP_VERSION: 1.1.0 - " + new Date().toISOString());
+    console.log("APP_VERSION: 2.0.0 - " + new Date().toISOString())
     const baseUrl = import.meta.env.BASE_URL
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'

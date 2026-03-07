@@ -204,19 +204,19 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield c
 
 
-# Helper to create a user and get token
 @pytest.fixture
 async def admin_token(client: AsyncClient) -> str:
-    """Get token for admin user"""
+    """Login as admin; cookie is set in client jar. Returns raw token for Bearer fallback."""
     response = await client.post(
         "/api/v1/login/access-token",
         data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"}
+        headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    return response.json()["access_token"]
+    assert response.status_code == 200
+    return client.cookies.get("access_token")
 
 
 @pytest.fixture
 async def auth_headers(admin_token: str) -> dict:
-    """Get authorization headers"""
+    """Bearer auth headers (for tests that need explicit header)."""
     return {"Authorization": f"Bearer {admin_token}"}

@@ -1,39 +1,39 @@
-import { useState, useEffect } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { api } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react"
+import { useAuth } from "@/contexts/AuthContext"
+import { useNavigate } from "react-router-dom"
+import { api } from "@/lib/api"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 
 export default function LoginPage() {
-    const [username, setUsername] = useState("");
-    const [password, setPassword] = useState("");
-    const [error, setError] = useState("");
-    const { login, isAuthenticated } = useAuth();
-    const navigate = useNavigate();
+    const [username, setUsername] = useState("")
+    const [password, setPassword] = useState("")
+    const [error, setError] = useState("")
+    const { login, isAuthenticated } = useAuth()
+    const navigate = useNavigate()
 
     useEffect(() => {
-        if (isAuthenticated) navigate("/", { replace: true });
-    }, [isAuthenticated, navigate]);
+        if (isAuthenticated) navigate("/", { replace: true })
+    }, [isAuthenticated, navigate])
 
     const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
+        e.preventDefault()
+        setError("")
 
         try {
-            const formData = new URLSearchParams();
-            formData.append("username", username);
-            formData.append("password", password);
+            const formData = new URLSearchParams()
+            formData.append("username", username)
+            formData.append("password", password)
 
-            const response = await api.post("/login/access-token", formData, {
-                headers: { "Content-Type": "application/x-www-form-urlencoded" }
-            });
+            await api.post("/login/access-token", formData, {
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            })
 
-            login(response.data.access_token);
-        } catch (err) {
-            setError("Неверное имя пользователя или пароль");
+            login()
+        } catch {
+            setError("Неверное имя пользователя или пароль")
         }
-    };
+    }
 
     return (
         <div className="flex items-center justify-center min-h-screen bg-slate-100 dark:bg-slate-900">
@@ -70,5 +70,5 @@ export default function LoginPage() {
                 </CardContent>
             </Card>
         </div>
-    );
+    )
 }

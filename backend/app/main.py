@@ -85,18 +85,17 @@ from jose import jwt, JWTError
 
 @app.middleware("http")
 async def tenant_context_middleware(request: Request, call_next):
-    # Try to get tenant_id from JWT token
-    auth_header = request.headers.get("Authorization")
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
     tenant_id = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ")[1]
+    if token:
         try:
-            # We use options={"verify_exp": False} for the middleware if we just want the ID
-            # but better to just try/except normally.
             payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             tenant_id = payload.get("tenant_id")
         except Exception:
-            # If token is invalid/expired, we just treat it as unauthenticated
             pass
             
     # Set context

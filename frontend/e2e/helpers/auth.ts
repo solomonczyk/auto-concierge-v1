@@ -5,8 +5,9 @@ const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
 
 /**
- * Логин через API + inject token в localStorage. Обходит race condition в LoginPage.
- * Стабильный паттерн для E2E.
+ * Login via API — cookie is set automatically in the browser context.
+ * page.request shares cookie jar with the browser, so Set-Cookie
+ * from the login response is available for subsequent page.goto().
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
   const apiUrl = `${baseURL.replace(/\/$/, '')}/concierge/api/v1/login/access-token`
@@ -17,17 +18,12 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   if (res.status() !== 200) {
     throw new Error(`Login API returned ${res.status()}`)
   }
-  const { access_token } = (await res.json()) as { access_token: string }
-  await page.addInitScript((token: string) => {
-    localStorage.setItem('token', token)
-  }, access_token)
   await page.goto('/concierge/')
   await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
 }
 
 /**
- * UI-based login — только для auth-ui smoke test.
- * Правильное ожидание: сначала URL, потом dashboard (после navigate от useEffect).
+ * UI-based login — only for auth-ui smoke test.
  */
 export async function loginAsAdminViaUI(page: Page): Promise<void> {
   await page.goto('/concierge/login')

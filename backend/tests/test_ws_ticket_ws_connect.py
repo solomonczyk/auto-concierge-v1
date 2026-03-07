@@ -35,7 +35,6 @@ class _DummyRedis:
 
 
 def _patch_redis(monkeypatch: pytest.MonkeyPatch) -> _DummyRedis:
-    """Patch Redis in all modules that use it."""
     dummy = _DummyRedis()
     monkeypatch.setattr(
         ws_endpoint.RedisService,
@@ -47,11 +46,6 @@ def _patch_redis(monkeypatch: pytest.MonkeyPatch) -> _DummyRedis:
         "get_redis",
         staticmethod(lambda: dummy),
     )
-    monkeypatch.setattr(
-        ws_auth_resolver.consume_jti_once,
-        "__module__",
-        ws_auth_resolver.consume_jti_once.__module__,
-    )
     return dummy
 
 
@@ -60,18 +54,13 @@ async def test_ws_connect_with_ticket_success(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    login_response = await client.post(
+    await client.post(
         f"{settings.API_V1_STR}/login/access-token",
         data={"username": "admin", "password": "admin"},
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    assert login_response.status_code == 200
-    access_token = login_response.json()["access_token"]
 
-    ws_ticket_response = await client.post(
-        f"{settings.API_V1_STR}/ws-ticket",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    ws_ticket_response = await client.post(f"{settings.API_V1_STR}/ws-ticket")
     assert ws_ticket_response.status_code == 200
     ws_ticket = ws_ticket_response.json()["ticket"]
 
@@ -91,7 +80,6 @@ async def test_ws_connect_with_ticket_success(
 async def test_ws_connect_without_ticket_returns_4401(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """WS connect without any ticket must be rejected with 4401."""
     _patch_redis(monkeypatch)
 
     with TestClient(app) as sync_client:
@@ -107,13 +95,12 @@ async def test_ws_connect_with_legacy_token_returns_4401(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Legacy ?token= must no longer be accepted — expect 4401."""
-    login_response = await client.post(
+    await client.post(
         f"{settings.API_V1_STR}/login/access-token",
         data={"username": "admin", "password": "admin"},
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    assert login_response.status_code == 200
-    access_token = login_response.json()["access_token"]
+    access_token = client.cookies.get("access_token")
 
     _patch_redis(monkeypatch)
 

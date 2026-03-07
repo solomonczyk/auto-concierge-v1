@@ -798,3 +798,66 @@ Status: pending removal.
 - `ws_auth_resolver.py`: единая точка auth resolution.
 - `WSAuthContext`: typed, frozen, нет магических строк.
 - Legacy `?token=`: **полностью удалён**.
+
+---
+
+### 2026-03-07 — Cookie-based auth: full migration from localStorage JWT
+
+**Цель**: убрать JWT из `localStorage` (High risk при XSS), перейти на `HttpOnly Secure` cookie.
+
+#### Backend изменения:
+
+1. **`backend/app/api/endpoints/login.py`**:
+   - `POST /login/access-token` теперь ставит `Set-Cookie: access_token` (HttpOnly, Secure в prod, SameSite=Lax).
+   - Больше не возвращает JWT в JSON body — ответ `{"status": "ok"}`.
+   - `/me` расширен: возвращает `user_id`, `username`, `role`, `tenant_id`, `tenant_slug`.
+   - Добавлен `POST /auth/logout` — удаляет cookie.
+
+2. **`backend/app/api/deps.py`**:
+   - `get_current_user` — cookie-first, Bearer header fallback (для Swagger / API clients).
+   - `OAuth2PasswordBearer(auto_error=False)` — не ломает requests без Bearer.
+   - `get_current_user_optional` — аналогично cookie-first.
+
+3. **`backend/app/main.py`**:
+   - `tenant_context_middleware` — читает token из cookie первым, fallback на Authorization header.
+
+4. **Backend тесты обновлены**:
+   - `test_auth.py`: `test_login_sets_cookie`, `test_me_returns_user_info`, `test_me_without_auth_returns_401`, `test_logout_clears_cookie`.
+   - `test_appointments.py`, `test_ws_ticket_api.py`, `test_ws_ticket_ws_connect.py` — убран `login_res.json()["access_token"]`, используется cookie из client jar.
+   - Результат: **14/14 passed**.
+
+#### Frontend изменения:
+
+5. **`frontend/src/lib/api.ts`**:
+   - `withCredentials: true` на axios instance.
+   - Убран `Authorization: Bearer` header injection из interceptor.
+   - Убрана ссылка на `localStorage`.
+   - Добавлен `setAuthExpiredCallback` для уведомления AuthContext о 401.
+
+6. **`frontend/src/contexts/AuthContext.tsx`**:
+   - Полная перезапись: нет `localStorage`, нет `token` в state.
+   - `isAuthenticated` определяется через `GET /me` при загрузке.
+   - `login()` вызывает `checkAuth()` (cookie уже установлен).
+   - `logout()` вызывает `POST /auth/logout` и очищает state.
+   - Добавлены `isLoading`, `user` в контекст.
+
+7. **`frontend/src/pages/LoginPage.tsx`**:
+   - `login()` без аргумента — cookie ставится автоматически.
+
+8. **`frontend/src/App.tsx`**:
+   - `RequireAuth` учитывает `isLoading` — не redirect пока проверяется auth.
+   - `APP_VERSION: 2.0.0`.
+
+9. **`frontend/e2e/helpers/auth.ts`**:
+   - Убран `addInitScript` / `localStorage.setItem('token', ...)`.
+   - `page.request.post()` ставит cookie в browser context автоматически.
+
+10. **Frontend тесты обновлены**:
+    - `AuthContext.test.tsx` — 4 теста: auth check, 401, login, logout.
+    - Результат: **10/10 unit tests passed**.
+
+#### Безопасность:
+- JWT больше не доступен через JavaScript (`HttpOnly`).
+- Cookie не передаётся по HTTP в production (`Secure`).
+- CSRF protection через `SameSite=Lax`.
+- `localStorage` полностью очищен от token-ов.

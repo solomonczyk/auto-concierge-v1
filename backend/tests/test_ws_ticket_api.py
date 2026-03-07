@@ -12,12 +12,8 @@ async def test_issue_ws_ticket_authenticated_returns_200(client: AsyncClient):
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
     assert login_response.status_code == 200
-    access_token = login_response.json()["access_token"]
 
-    response = await client.post(
-        f"{settings.API_V1_STR}/ws-ticket",
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
+    response = await client.post(f"{settings.API_V1_STR}/ws-ticket")
     assert response.status_code == 200
 
     data = response.json()
