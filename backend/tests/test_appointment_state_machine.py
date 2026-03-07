@@ -31,6 +31,22 @@ class TestAllowedTransitions:
     def test_waitlist_to_new(self):
         validate_transition(current=S.WAITLIST, target=S.NEW, role=UserRole.ADMIN)
 
+    def test_completed_to_in_progress(self):
+        """Backward: Готова → В работе."""
+        validate_transition(current=S.COMPLETED, target=S.IN_PROGRESS, role=UserRole.STAFF)
+
+    def test_in_progress_to_confirmed(self):
+        """Backward: В работе → Подтверждена."""
+        validate_transition(current=S.IN_PROGRESS, target=S.CONFIRMED, role=UserRole.STAFF)
+
+    def test_confirmed_to_new(self):
+        """Backward: Подтверждена → Новая."""
+        validate_transition(current=S.CONFIRMED, target=S.NEW, role=UserRole.MANAGER)
+
+    def test_new_to_waitlist(self):
+        """Backward: Новая → Лист ожидания."""
+        validate_transition(current=S.NEW, target=S.WAITLIST, role=UserRole.MANAGER)
+
 
 class TestForbiddenTransitions:
     def test_completed_to_new(self):
@@ -48,17 +64,11 @@ class TestForbiddenTransitions:
             validate_transition(current=S.NO_SHOW, target=S.IN_PROGRESS, role=UserRole.ADMIN)
         assert exc.value.code == "invalid_transition"
 
-    def test_completed_to_in_progress(self):
-        with pytest.raises(TransitionError) as exc:
-            validate_transition(current=S.COMPLETED, target=S.IN_PROGRESS, role=UserRole.ADMIN)
-        assert exc.value.code == "invalid_transition"
-
 
 class TestRolePermissions:
-    def test_staff_cannot_confirm(self):
-        with pytest.raises(TransitionError) as exc:
-            validate_transition(current=S.NEW, target=S.CONFIRMED, role=UserRole.STAFF)
-        assert exc.value.code == "permission_denied"
+    def test_staff_can_confirm_backward(self):
+        """STAFF can move in_progress→confirmed (backward on Kanban)."""
+        validate_transition(current=S.IN_PROGRESS, target=S.CONFIRMED, role=UserRole.STAFF)
 
     def test_staff_can_start(self):
         validate_transition(current=S.CONFIRMED, target=S.IN_PROGRESS, role=UserRole.STAFF)

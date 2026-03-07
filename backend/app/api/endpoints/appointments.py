@@ -22,6 +22,7 @@ from app.core.metrics import (
 )
 from app.bot.tenant import get_tenant_shop
 from app.schemas.appointment_history import AppointmentHistoryRead
+from app.services.usage_service import check_appointments_limit, LimitExceededError
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -179,26 +180,19 @@ async def create_appointment(
     tenant_id: int = Depends(deps.get_current_tenant_id),
     current_user: User = Depends(deps.require_role([UserRole.ADMIN, UserRole.MANAGER]))
 ):
-    # 0. Enforce Tenancy and Tariffs
+    # 0. Enforce Tenancy and SaaS Limits
     shop_id = current_user.shop_id
-    
-    # Check Tariff Limits
-    stmt_count = select(func.count(Appointment.id)).where(
-        and_(
-            Appointment.tenant_id == tenant_id,
-            Appointment.status != AppointmentStatus.CANCELLED
-        )
-    )
-    current_count = (await db.execute(stmt_count)).scalar() or 0
-    
+
     stmt_tenant = select(Tenant).options(joinedload(Tenant.tariff_plan)).where(Tenant.id == tenant_id)
     tenant = (await db.execute(stmt_tenant)).scalar_one()
-    
-    max_appt = tenant.tariff_plan.max_appointments if tenant.tariff_plan else 10
-    if current_count >= max_appt:
+    plan_name = tenant.tariff_plan.name if tenant.tariff_plan else None
+
+    try:
+        await check_appointments_limit(db, tenant_id, plan_name)
+    except LimitExceededError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Tariff limit reached ({max_appt} bookings). Please upgrade your plan."
+            detail=e.to_detail(),
         )
 
     # 1. Get Service to calculate duration
@@ -435,18 +429,36 @@ def _should_show_completed_in_kanban(
     work_end: int,
     tz_name: str,
 ) -> bool:
-    """Show in 'Готова' column only if completed today and before end of workday."""
+    """
+    Show in 'Готова' column:
+    - Working day (Mon–Fri): only if completed today and before work_end.
+    - Weekend (Sat–Sun): show if completed during this weekend; cards stay until next working day.
+    """
     if completed_at is None:
         return False
     tz_obj = ZoneInfo(tz_name)
     now_local = datetime.now(tz_obj)
     completed_local = completed_at.astimezone(tz_obj)
+    now_weekday = now_local.weekday()  # Mon=0, Sun=6
+
+    # Weekend (Sat=5, Sun=6): show completed from this weekend until next working day
+    if now_weekday >= 5:
+        # Same weekend: completed on Sat or Sun of current week
+        completed_weekday = completed_local.weekday()
+        if completed_weekday >= 5:
+            # Both on weekend; same weekend = completed within last 2 days
+            return (now_local - completed_local).days <= 2
+        # Completed on a working day (e.g. Friday) but we're on weekend — show if since last workday end
+        days_to_friday = now_weekday - 4  # Sat: 1, Sun: 2
+        last_friday = now_local - timedelta(days=days_to_friday)
+        weekend_start = last_friday.replace(hour=work_end, minute=0, second=0, microsecond=0)
+        return completed_local >= weekend_start
+
+    # Working day: show if completed today and before work_end
     if completed_local.date() != now_local.date():
         return False
     end_of_day = now_local.replace(hour=work_end, minute=0, second=0, microsecond=0)
-    if now_local >= end_of_day:
-        return False
-    return True
+    return now_local < end_of_day
 
 
 @router.get("/", response_model=List[AppointmentRead])

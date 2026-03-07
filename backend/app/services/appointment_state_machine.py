@@ -7,10 +7,10 @@ Keeps business rules in one place instead of scattering across endpoints.
 from app.models.models import AppointmentStatus as S, UserRole
 
 ALLOWED_TRANSITIONS: dict[S, set[S]] = {
-    S.NEW:         {S.CONFIRMED, S.CANCELLED},
-    S.CONFIRMED:   {S.IN_PROGRESS, S.CANCELLED, S.NO_SHOW},
-    S.IN_PROGRESS: {S.COMPLETED, S.CANCELLED},
-    S.COMPLETED:   set(),
+    S.NEW:         {S.CONFIRMED, S.CANCELLED, S.WAITLIST},
+    S.CONFIRMED:   {S.IN_PROGRESS, S.CANCELLED, S.NO_SHOW, S.NEW},
+    S.IN_PROGRESS: {S.COMPLETED, S.CANCELLED, S.CONFIRMED},
+    S.COMPLETED:   {S.IN_PROGRESS},
     S.CANCELLED:   set(),
     S.NO_SHOW:     set(),
     S.WAITLIST:    {S.NEW, S.CANCELLED},
@@ -19,8 +19,8 @@ ALLOWED_TRANSITIONS: dict[S, set[S]] = {
 ROLE_PERMISSIONS: dict[UserRole, set[S]] = {
     UserRole.SUPERADMIN: {s for s in S},
     UserRole.ADMIN:      {s for s in S},
-    UserRole.MANAGER:    {S.CONFIRMED, S.CANCELLED, S.NO_SHOW},
-    UserRole.STAFF:      {S.IN_PROGRESS, S.COMPLETED},
+    UserRole.MANAGER:    {S.NEW, S.CONFIRMED, S.CANCELLED, S.NO_SHOW, S.WAITLIST},
+    UserRole.STAFF:      {S.CONFIRMED, S.IN_PROGRESS, S.COMPLETED},
 }
 
 SYSTEM_ALLOWED_TARGETS: set[S] = {S.NO_SHOW, S.CANCELLED}

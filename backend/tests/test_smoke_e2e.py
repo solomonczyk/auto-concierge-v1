@@ -1,13 +1,15 @@
 """
-End-to-end smoke test: full client journey.
+End-to-end smoke test: full client journey (production-like).
 
 Steps:
   1. POST /login/access-token  → cookie set
   2. GET  /me                  → user info with tenant
-  3. POST /appointments/       → appointment created despite mocked external sync failure
-  4. External sync fail-safe   → appointment persists, error logged
-  5. WS receives update        → tenant-scoped pubsub
-  6. Webhook processed         → tenant isolation respected
+  3. POST /appointments/       → appointment created
+  4. PATCH /appointments/{id}/status → status updated
+  5. External sync fail-safe   → appointment persists
+  6. WS receives update        → tenant-scoped pubsub
+  7. Webhook processed         → tenant isolation respected
+  8. POST /auth/logout         → cookies cleared
 """
 
 import pytest
@@ -79,9 +81,12 @@ async def test_full_client_journey(
     )
     assert login_res.status_code == 200, f"Step 1 FAIL: login returned {login_res.status_code}"
     assert client.cookies.get("access_token"), "Step 1 FAIL: no access_token cookie"
+    csrf = login_res.cookies.get("csrf_token")
+    assert csrf, "Step 1 FAIL: no csrf_token cookie"
+    csrf_headers = {"X-CSRF-Token": csrf}
 
     # ------------------------------------------------------------------
-    # Step 2: GET /me
+    # Step 2: GET /me (also refreshes CSRF cookie — use latest for mutating requests)
     # ------------------------------------------------------------------
     me_res = await client.get(f"{settings.API_V1_STR}/me")
     assert me_res.status_code == 200, f"Step 2 FAIL: /me returned {me_res.status_code}"
@@ -90,6 +95,8 @@ async def test_full_client_journey(
     assert me_data["tenant_id"] is not None
     assert me_data["role"] is not None
     tenant_id = me_data["tenant_id"]
+    csrf = client.cookies.get("csrf_token") or me_res.cookies.get("csrf_token") or csrf
+    csrf_headers = {"X-CSRF-Token": csrf}
 
     # ------------------------------------------------------------------
     # Step 3: Create appointment (external sync will fail — must not break)
@@ -106,11 +113,23 @@ async def test_full_client_journey(
             "client_name": "Smoke Test Client",
             "client_phone": "+70001112233",
         },
+        headers=csrf_headers,
     )
     assert appt_res.status_code == 200, f"Step 3 FAIL: create appointment returned {appt_res.status_code}: {appt_res.text}"
     appt_data = appt_res.json()
     assert appt_data["id"] is not None
     assert appt_data["status"] == "new"
+
+    # ------------------------------------------------------------------
+    # Step 3b: PATCH appointment status
+    # ------------------------------------------------------------------
+    patch_res = await client.patch(
+        f"{settings.API_V1_STR}/appointments/{appt_data['id']}/status",
+        json={"status": "confirmed"},
+        headers=csrf_headers,
+    )
+    assert patch_res.status_code == 200, f"Step 3b FAIL: patch status returned {patch_res.status_code}"
+    assert patch_res.json()["status"] == "confirmed"
 
     # ------------------------------------------------------------------
     # Step 4: External sync fail-safe (covered by conftest mock — enqueue is mocked)
@@ -121,18 +140,15 @@ async def test_full_client_journey(
     assert get_appt_res.json()["id"] == appt_data["id"]
 
     # ------------------------------------------------------------------
-    # Step 5: WS receives update scoped to tenant
+    # Step 5: WS receives update scoped to tenant (cookie-based auth)
     # ------------------------------------------------------------------
-    ws_ticket_res = await client.post(f"{settings.API_V1_STR}/ws-ticket")
-    assert ws_ticket_res.status_code == 200, f"Step 5 FAIL: ws-ticket returned {ws_ticket_res.status_code}"
-    ws_ticket = ws_ticket_res.json()["ticket"]
-
+    cookies = {c.name: c.value for c in client.cookies.jar}
     dummy_redis = _patch_redis(monkeypatch)
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect(
-            f"{settings.API_V1_STR}/ws?ticket={ws_ticket}"
-        ) as ws:
+        for name, value in cookies.items():
+            sync_client.cookies.set(name, value)
+        with sync_client.websocket_connect(f"{settings.API_V1_STR}/ws") as ws:
             pass  # connect + disconnect
 
     assert len(dummy_redis._pubsub.channels) == 1
@@ -175,3 +191,13 @@ async def test_full_client_journey(
     assert wh_res.status_code == 200, f"Step 6 FAIL: webhook returned {wh_res.status_code}"
     assert wh_res.json()["status"] == "ok"
     feed_mock.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # Step 7: Logout — cookies cleared
+    # ------------------------------------------------------------------
+    logout_res = await client.post(
+        f"{settings.API_V1_STR}/auth/logout",
+        headers=csrf_headers,
+    )
+    assert logout_res.status_code == 200, f"Step 7 FAIL: logout returned {logout_res.status_code}"
+    assert not client.cookies.get("access_token"), "Step 7 FAIL: access_token cookie should be cleared"

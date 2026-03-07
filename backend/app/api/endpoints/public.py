@@ -28,6 +28,8 @@ from app.models.models import (
     Tenant,
 )
 from app.services.redis_service import RedisService
+from app.services.usage_service import check_appointments_limit, LimitExceededError
+from fastapi import status
 
 logger = logging.getLogger(__name__)
 
@@ -177,11 +179,24 @@ async def create_public_appointment(
             raise HTTPException(status_code=404, detail="Услуга не найдена")
 
         # 3. Resolve Shop
-        tenant_stmt = select(Tenant).where(Tenant.id == tenant_id)
+        tenant_stmt = select(Tenant).options(joinedload(Tenant.tariff_plan)).where(Tenant.id == tenant_id)
         tenant = (await db.execute(tenant_stmt)).scalar_one()
         shop = await get_tenant_shop(db, tenant)
         if not shop:
             raise HTTPException(status_code=400, detail="Сервис недоступен. Попробуйте позже")
+
+        # 3b. SaaS limit: new appointments only (not rescheduling)
+        from app.services.usage_service import check_appointments_limit, LimitExceededError
+
+        if not payload.appointment_id:
+            plan_name = tenant.tariff_plan.name if tenant.tariff_plan else None
+            try:
+                await check_appointments_limit(db, tenant_id, plan_name)
+            except LimitExceededError as e:
+                raise HTTPException(
+                    status_code=403,
+                    detail=e.to_detail(),
+                )
 
         # 4. Handle Rescheduling
         existing_appt = None

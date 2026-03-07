@@ -41,9 +41,10 @@ services:
       - POSTGRES_SERVER=db
       - REDIS_HOST=redis
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_WEBHOOK_SECRET=tmp-prod-secret-123
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
       - SECRET_KEY=${SECRET_KEY}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS:-http://localhost:5173}
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/ready', timeout=5); exit(0 if r.getcode()==200 else 1)\" 2>/dev/null || exit 1"]
       interval: 30s

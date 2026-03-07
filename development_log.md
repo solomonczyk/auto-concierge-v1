@@ -1384,6 +1384,37 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 
 ---
 
+## 2026-03-07 — Этап 4: Billing / SaaS readiness (DONE)
+
+**Реализовано:**
+- **Tenant plan model:** планы starter, business, enterprise. Миграция `a1b2c3d4e5f6` добавляет планы и мигрирует free→starter, standard→business, pro→enterprise.
+- **Limits model:** config/service layer (`plan_limits.py`) — max_users, max_appointments_per_month, max_webhook_requests_per_day, max_ai_requests_per_day.
+- **Usage counters:** `get_appointments_this_month`, `get_users_count`; enforced limiter на appointments.
+- **Enforcement:** при превышении лимита — 403 с payload `{code, limit_name, current, limit, message}`.
+- **Plan-aware feature gating:** webhook/ai — business+; advanced_analytics — enterprise only. Endpoint GET /api/v1/features, gated GET /api/v1/features/analytics/advanced.
+- **Tests:** 18 тестов в `test_billing_saas.py`.
+
+**Deliverable:** `docs/STAGE4_BILLING_SAAS_DELIVERABLE.md`
+
+---
+
+## 2026-03-07 — Этап 5: Deployment + Production Checklist (DONE)
+
+**Реализовано:**
+- **Production deploy pack:** docker-compose.prod.yml (без хардкода секретов), .env.example.production, BACKEND_CORS_ORIGINS
+- **Release flow:** backup → migrate → restart → smoke (docs/RELEASE_FLOW.md)
+- **Rollback flow:** down → downgrade → restore DB → checkout → up
+- **Backup/restore:** docs/BACKUP_RESTORE.md (PostgreSQL pg_dump, Redis не бэкапим)
+- **Production checklist:** docs/PRODUCTION_CHECKLIST.md (secrets, CSRF, CORS, health, rate limits, billing, backup, SSL)
+- **Runbook:** docs/RUNBOOK.md (DB down, Redis down, webhook spike, WS stop, migrations failed)
+- **Deployment docs:** docs/DEPLOYMENT.md (поднять, обновить, проверить)
+- **Final smoke:** test_full_client_journey — login, /me, create appointment, patch status, WS, webhook, logout
+- **CSRF:** webhook исключён из проверки CSRF (вызов от Telegram, своя аутентификация)
+
+**Deliverable:** `docs/STAGE5_DEPLOYMENT_DELIVERABLE.md`
+
+---
+
 ## Roadmap: порядок реализации
 
 ### Блок A. Продуктовая логика (in progress)

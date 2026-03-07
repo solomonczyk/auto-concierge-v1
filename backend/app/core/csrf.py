@@ -31,8 +31,8 @@ def csrf_cookie_kwargs(*, max_age: int, secure: bool) -> dict:
 
 
 def _skip_csrf_path(path: str) -> bool:
-    """Login doesn't require CSRF (no session yet; attacker can't force login without credentials)."""
-    return "/login/access-token" in path
+    """Paths that don't require CSRF: login (no session yet), webhook (called by Telegram, no cookies)."""
+    return "/login/access-token" in path or "/webhook" in path
 
 
 async def csrf_middleware(request: Request, call_next):

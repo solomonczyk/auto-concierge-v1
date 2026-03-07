@@ -148,10 +148,10 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
 
         # Begin transaction for seeding
         async with session.begin():
-            # Create test tariff plan
+            # Create test tariff plan (SaaS: starter)
             tariff = TariffPlan(
-                name="free",
-                max_appointments=10,
+                name="starter",
+                max_appointments=50,
                 max_shops=1,
                 is_active=True
             )
