@@ -5,7 +5,7 @@ import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, delete
 from sqlalchemy.orm import joinedload
 from app.db.session import get_db
 from app.api import deps
@@ -18,6 +18,7 @@ from app.core.metrics import (
     APPOINTMENTS_CREATED_TOTAL,
     APPOINTMENTS_CREATION_FAILED_TOTAL,
     APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL,
+    APPOINTMENT_STATUS_TRANSITIONS_TOTAL,
 )
 from app.bot.tenant import get_tenant_shop
 from app.schemas.appointment_history import AppointmentHistoryRead
@@ -83,6 +84,15 @@ class AppointmentRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class KanbanBoardResponse(BaseModel):
+    """Kanban board grouped by status. Terminal statuses (cancelled, no_show) excluded."""
+    waitlist: List[AppointmentRead] = []
+    new: List[AppointmentRead] = []
+    confirmed: List[AppointmentRead] = []
+    in_progress: List[AppointmentRead] = []
+    completed: List[AppointmentRead] = []
 
 from pydantic import BaseModel, field_validator
 
@@ -310,21 +320,25 @@ async def create_appointment(
     finally:
         await redis.delete(lock_key)
 
-@router.patch("/{id}/status", response_model=AppointmentRead)
+@router.patch("/{appointment_id}/status", response_model=AppointmentRead)
 async def update_appointment_status(
-    id: int,
+    appointment_id: int,
     status_update: AppointmentStatusUpdate,
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(deps.get_current_tenant_id),
     current_user: User = Depends(deps.get_current_active_user),
 ):
+    """
+    Change appointment status. Used by Kanban for moving cards.
+    Validates transitions via state machine, writes history, publishes WS event.
+    """
     from app.services.appointment_state_machine import validate_transition, TransitionError
     from app.models.models import AppointmentHistory
 
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
-    ).where(and_(Appointment.id == id, Appointment.tenant_id == tenant_id))
+    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
 
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
@@ -407,6 +421,12 @@ async def update_appointment_status(
         "new_status": target.value,
     }
     await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(payload))
+
+    APPOINTMENT_STATUS_TRANSITIONS_TOTAL.labels(
+        tenant_id=str(tenant_id),
+        old_status=old_status.value,
+        new_status=target.value,
+    ).inc()
 
     return appt
 
@@ -545,16 +565,16 @@ async def read_appointments_terminal(
     return list(result.scalars().all())
 
 
-@router.get("/kanban", response_model=List[AppointmentRead])
+@router.get("/kanban", response_model=KanbanBoardResponse)
 async def read_appointments_kanban(
-    skip: int = 0,
-    limit: int = 100,
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(deps.get_current_tenant_id),
 ):
     """
-    Kanban board: only waitlist, new, confirmed, in_progress, completed.
-    Excludes cancelled and no_show.
+    Kanban board for operator dashboard. Grouped by status:
+    waitlist, new, confirmed, in_progress, completed.
+    Excludes terminal statuses: cancelled, no_show.
+    Sorted by start_time ASC within each column.
     """
     stmt = (
         select(Appointment)
@@ -565,11 +585,24 @@ async def read_appointments_kanban(
                 Appointment.status.in_(KANBAN_STATUSES),
             )
         )
-        .offset(skip)
-        .limit(limit)
+        .order_by(Appointment.start_time.asc())
     )
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    appointments = list(result.scalars().all())
+
+    groups: Dict[str, List] = {
+        "waitlist": [],
+        "new": [],
+        "confirmed": [],
+        "in_progress": [],
+        "completed": [],
+    }
+    for a in appointments:
+        key = a.status.value
+        if key in groups:
+            groups[key].append(a)
+
+    return KanbanBoardResponse(**groups)
 
 
 @router.get("/{appointment_id}/history", response_model=List[AppointmentHistoryRead])
@@ -616,11 +649,11 @@ async def read_appointment_history(
     ]
 
 
-@router.get("/{id}", response_model=AppointmentRead)
+@router.get("/{appointment_id}", response_model=AppointmentRead)
 async def read_appointment(
-    id: int, 
+    appointment_id: int,
     db: AsyncSession = Depends(get_db),
-    tenant_id: int = Depends(deps.get_current_tenant_id)
+    tenant_id: int = Depends(deps.get_current_tenant_id),
 ):
     """
     Get appointment by ID. Requires authentication.
@@ -629,7 +662,7 @@ async def read_appointment(
     stmt = (
         select(Appointment)
         .options(joinedload(Appointment.client), joinedload(Appointment.service))
-        .where(and_(Appointment.id == id, Appointment.tenant_id == tenant_id))
+        .where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
     )
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
@@ -637,6 +670,125 @@ async def read_appointment(
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
     return appt
+
+
+@router.put("/{appointment_id}", response_model=AppointmentRead)
+async def put_appointment(
+    appointment_id: int,
+    appt_update: AppointmentUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Update appointment by ID. Only within tenant scope.
+    Updates only allowed fields: service_id, start_time, car_make, car_year, vin.
+    Returns 404 if not found or belongs to another tenant.
+    """
+    stmt = select(Appointment).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    if appt_update.service_id is not None:
+        service = await db.get(Service, appt_update.service_id)
+        if not service or service.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="Service not found")
+        appt.service_id = appt_update.service_id
+        start = appt_update.start_time or appt.start_time
+        appt.end_time = start + timedelta(minutes=service.duration_minutes)
+
+    if appt_update.start_time is not None:
+        new_start = appt_update.start_time
+        if new_start.tzinfo is None:
+            new_start = new_start.replace(tzinfo=tz.utc)
+        else:
+            new_start = new_start.astimezone(tz.utc)
+        new_start_naive = new_start.replace(tzinfo=None)
+
+        service = await db.get(Service, appt.service_id)
+        available_slots = await get_available_slots(
+            shop_id=appt.shop_id,
+            service_duration_minutes=service.duration_minutes,
+            date=new_start_naive.date(),
+            db=db,
+            exclude_appointment_id=appointment_id,
+        )
+        if not any(
+            slot == new_start or slot.replace(tzinfo=None) == new_start_naive
+            for slot in available_slots
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Selected time is outside working hours or conflicts with another appointment",
+            )
+
+        appt.start_time = appt_update.start_time
+        appt.end_time = appt.start_time + timedelta(minutes=service.duration_minutes)
+
+    if appt_update.car_make is not None:
+        appt.car_make = appt_update.car_make
+    if appt_update.car_year is not None:
+        appt.car_year = appt_update.car_year
+    if appt_update.vin is not None:
+        appt.vin = appt_update.vin
+
+    await db.commit()
+
+    stmt = select(Appointment).options(
+        joinedload(Appointment.client),
+        joinedload(Appointment.service),
+    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
+    result = await db.execute(stmt)
+    appt = result.scalar_one()
+
+    redis = RedisService.get_redis()
+    message = {
+        "type": "APPOINTMENT_UPDATED",
+        "data": {"id": appt.id, "shop_id": appt.shop_id},
+    }
+    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+
+    return appt
+
+
+@router.delete("/{appointment_id}", status_code=204)
+async def delete_appointment(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Delete appointment by ID. Only within tenant scope.
+    Returns 204 No Content on success.
+    """
+    stmt = select(Appointment).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    await db.execute(
+        delete(AppointmentHistory).where(
+            and_(
+                AppointmentHistory.appointment_id == appointment_id,
+                AppointmentHistory.tenant_id == tenant_id,
+            )
+        )
+    )
+    await db.delete(appt)
+    await db.commit()
+
+
 @router.post("/public", response_model=AppointmentRead)
 async def create_public_appointment(
     payload: PublicBookingCreate,

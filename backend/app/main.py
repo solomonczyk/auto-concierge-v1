@@ -13,14 +13,16 @@ from slowapi.errors import RateLimitExceeded
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.core.config import settings
+from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
-from app.core.metrics import HTTP_REQUEST_DURATION
+from app.core.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS_TOTAL, HTTP_ERROR_TOTAL
 from app.api.api import api_router
 from app.bot.loader import dp, bot
 from app.bot.handlers import router as bot_router
 
+configure_logging()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logging.getLogger().setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 logging.getLogger("aiogram").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,18 @@ async def lifespan(app: FastAPI):
     logger.info("Lifespan startup initiated")
     yield
     logger.info("Lifespan shutdown initiated")
+    try:
+        from app.services.redis_service import RedisService
+        await RedisService.close()
+        logger.info("Redis connections closed")
+    except Exception as e:
+        logger.warning("Redis shutdown: %s", e)
+    try:
+        from app.db.session import engine
+        await engine.dispose()
+        logger.info("DB engine disposed")
+    except Exception as e:
+        logger.warning("DB shutdown: %s", e)
 
 
 _docs = None if settings.is_production else "/docs"
@@ -52,13 +66,40 @@ app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
+    rid = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+    response = JSONResponse(
         status_code=429,
         content={
             "detail": "Rate limit exceeded. Please try again later.",
             "retry_after": exc.detail,
         },
     )
+    response.headers["X-Request-ID"] = rid
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Log unhandled exceptions (not HTTPException) with stack trace; return sanitized 500."""
+    from fastapi import HTTPException as FastAPIHTTPException
+    if isinstance(exc, FastAPIHTTPException):
+        raise exc
+    rid = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+    logger.exception(
+        "Unhandled exception: %s",
+        exc,
+        extra={
+            "request_id": rid,
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
+    response = JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+    response.headers["X-Request-ID"] = rid
+    return response
 
 
 if settings.is_production and ("*" in settings.BACKEND_CORS_ORIGINS):
@@ -90,11 +131,12 @@ else:
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 from app.core.context import tenant_id_context
+from app.core.csrf import csrf_middleware
 from jose import jwt, JWTError
 
 
 # ---------------------------------------------------------------------------
-# Middleware: request_id
+# Middleware: request_id (outermost — runs first, so all responses get X-Request-ID)
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
@@ -103,6 +145,14 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = rid
     return response
+
+
+# ---------------------------------------------------------------------------
+# Middleware: CSRF (double-submit cookie)
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def csrf_protection_middleware(request: Request, call_next):
+    return await csrf_middleware(request, call_next)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +223,9 @@ async def log_requests(request: Request, call_next):
     HTTP_REQUEST_DURATION.labels(
         method=method, path=metric_path, status=str(status_code)
     ).observe(elapsed)
+    HTTP_REQUESTS_TOTAL.labels(method=method, path=metric_path, status=str(status_code)).inc()
+    if 500 <= status_code < 600:
+        HTTP_ERROR_TOTAL.labels(method=method, path=metric_path).inc()
 
     return response
 
@@ -186,11 +239,11 @@ async def prometheus_metrics():
 
 
 # ---------------------------------------------------------------------------
-# Health check
+# Health endpoints: /live (liveness), /ready (readiness), /health (general)
 # ---------------------------------------------------------------------------
-@app.api_route("/health", methods=["GET", "HEAD"])
-async def health_check():
-    """Deep health check: verifies DB and Redis connectivity."""
+
+async def _run_readiness_checks() -> tuple[dict[str, str], float]:
+    """Check DB and Redis. Returns (checks dict, elapsed_ms)."""
     from sqlalchemy import text
     from app.db.session import async_session_local
     from app.services.redis_service import RedisService
@@ -203,18 +256,49 @@ async def health_check():
             await session.execute(text("SELECT 1"))
         checks["db"] = "ok"
     except Exception as exc:
-        logger.error("[health] DB check failed: %s", exc)
-        checks["db"] = f"error: {type(exc).__name__}"
+        logger.error("[readiness] DB check failed: %s", exc)
+        checks["db"] = f"unavailable: {type(exc).__name__}"
 
     try:
         redis = RedisService.get_redis()
         await redis.ping()
         checks["redis"] = "ok"
     except Exception as exc:
-        logger.error("[health] Redis check failed: %s", exc)
-        checks["redis"] = f"error: {type(exc).__name__}"
+        logger.error("[readiness] Redis check failed: %s", exc)
+        checks["redis"] = f"unavailable: {type(exc).__name__}"
 
     elapsed_ms = round((time_module.monotonic() - start) * 1000)
+    return checks, elapsed_ms
+
+
+@app.api_route("/live", methods=["GET", "HEAD"])
+async def live():
+    """Liveness: app is running, no dependency checks."""
+    return {"status": "ok", "project": settings.PROJECT_NAME}
+
+
+@app.api_route("/ready", methods=["GET", "HEAD"])
+async def ready():
+    """Readiness: DB and Redis must be available. 503 if any dependency down."""
+    checks, elapsed_ms = await _run_readiness_checks()
+    all_ok = all(v == "ok" for v in checks.values())
+
+    payload = {
+        "status": "ok" if all_ok else "not_ready",
+        "project": settings.PROJECT_NAME,
+        "checks": checks,
+        "elapsed_ms": elapsed_ms,
+    }
+
+    if not all_ok:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
+
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health_check():
+    """General health: same as /ready, returns 500 if degraded (backward compat)."""
+    checks, elapsed_ms = await _run_readiness_checks()
     all_ok = all(v == "ok" for v in checks.values())
 
     payload = {

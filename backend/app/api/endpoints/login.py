@@ -11,6 +11,11 @@ from app.core.rate_limit import limiter
 from app.api import deps
 from app.core import security
 from app.core.config import settings
+from app.core.csrf import (
+    generate_csrf_token,
+    csrf_cookie_kwargs,
+    CSRF_COOKIE_NAME,
+)
 from app.db.session import get_db
 from app.models.models import User, Tenant
 
@@ -18,6 +23,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 AUTH_COOKIE_NAME = "access_token"
+CSRF_MAX_AGE = 60 * 60 * 24  # 24h, same as typical session
 
 
 def _cookie_kwargs() -> dict:
@@ -35,8 +41,8 @@ async def get_me(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(deps.get_current_active_user),
-) -> dict:
-    """Current user info with tenant_slug (for demo button visibility)."""
+):
+    """Current user info with tenant_slug. Sets CSRF cookie for bootstrap."""
     result = {
         "user_id": user.id,
         "username": user.username,
@@ -58,7 +64,13 @@ async def get_me(
         user.tenant_id,
         extra={"request_id": rid, "user_id": user.id, "tenant_id": user.tenant_id},
     )
-    return result
+    response = JSONResponse(content=result)
+    csrf_token = generate_csrf_token()
+    response.set_cookie(
+        value=csrf_token,
+        **csrf_cookie_kwargs(max_age=CSRF_MAX_AGE, secure=settings.is_production),
+    )
+    return response
 
 
 @router.post("/login/access-token")
@@ -104,11 +116,17 @@ async def login_access_token(
         extra={"request_id": rid, "user_id": user.id, "tenant_id": user.tenant_id},
     )
 
+    csrf_token = generate_csrf_token()
+    max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     response = JSONResponse(content={"status": "ok"})
     response.set_cookie(
         value=token,
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=max_age,
         **_cookie_kwargs(),
+    )
+    response.set_cookie(
+        value=csrf_token,
+        **csrf_cookie_kwargs(max_age=max_age, secure=settings.is_production),
     )
     return response
 
@@ -119,4 +137,8 @@ async def logout(request: Request):
     logger.info("auth.logout", extra={"request_id": rid})
     response = JSONResponse(content={"status": "ok"})
     response.delete_cookie(**_cookie_kwargs())
+    response.delete_cookie(
+        key=CSRF_COOKIE_NAME,
+        path="/",
+    )
     return response

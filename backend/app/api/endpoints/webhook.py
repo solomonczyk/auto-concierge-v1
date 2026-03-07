@@ -1,3 +1,4 @@
+import logging
 import secrets
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from aiogram.types import Update
@@ -13,6 +14,7 @@ from app.bot.loader import bot, dp
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/webhook")
@@ -22,6 +24,11 @@ async def bot_webhook(
     update: dict,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
+    rid = getattr(request.state, "request_id", None) or "-"
+    logger.info(
+        "webhook.request",
+        extra={"request_id": rid, "update_id": update.get("update_id")},
+    )
     WEBHOOK_REQUESTS_TOTAL.inc()
 
     if settings.is_production and not settings.TELEGRAM_WEBHOOK_SECRET:

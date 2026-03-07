@@ -1102,6 +1102,288 @@ no_show → (terminal)
 
 ---
 
+## 2026-03-07 — Тест на точное содержимое AppointmentHistory после PATCH status
+
+**Задача:** Зафиксировать, что backend пишет правильные данные в history, а не просто любую новую строку.
+
+**Тест:** `test_patch_status_writes_to_history` (расширен)
+
+**Проверки:**
+- `assert transition["appointment_id"] == appt_id` — запись привязана к нужному appointment
+- `assert transition["old_status"] == "new"` — корректный old_status
+- `assert transition["new_status"] == "confirmed"` — корректный new_status
+- `assert transition.get("actor") == "admin"` — поле actor (username из User по changed_by_user_id) заполнено корректно
+
+**Результат:** Тест проходит, контракт history после new→confirmed зафиксирован.
+
+---
+
+## 2026-03-07 — Тест на payload WebSocket-события после PATCH status
+
+**Задача:** Зафиксировать контракт WS-события, чтобы фронт/WS-клиент не сломался от «тихих» изменений backend.
+
+**Тест:** `test_patch_status_publishes_appointment_status_updated` (расширен проверками payload)
+
+**Проверки:**
+- `assert payload["type"] == "appointment_status_updated"`
+- `assert payload.get("appointment_id") == appt_id or payload.get("id") == appt_id` — ID записи (appointment_id или id)
+- `assert payload["new_status"] == "confirmed"` — новый статус
+- `assert payload["old_status"] == "new"`
+- Опционально: если backend добавляет `tenant_id` или `updated_at` — проверяем их наличие и корректность
+
+**Результат:** Тест проходит, контракт WS-события зафиксирован.
+
+---
+
+## 2026-03-07 — Production-grade status lifecycle tests (10 сценариев)
+
+**Задача:** Закрыть модуль appointments lifecycle тестами production-уровня.
+
+**Реализованные тесты:**
+
+| # | Тест | Проверки |
+|---|------|----------|
+| 1 | `test_patch_status_not_found_returns_404` | 404, history не изменилась, redis.publish не вызван |
+| 2 | `test_patch_status_actor_manager_and_staff` | manager/staff: статус меняется, actor в history = username |
+| 3 | `test_patch_status_tenant_channel_isolation` | publish только в appointments_updates:{tenant_id} |
+| 4 | `test_patch_status_race_condition_one_succeeds` | два PATCH одновременно: один 200, второй 4xx или оба 200 (last write wins) |
+| 5 | `test_patch_status_history_chain` | new→confirmed→in_progress→completed: 3 записи в history |
+| 6 | `test_patch_status_ws_payload_full_contract` | payload: type, id, old_status, new_status; опционально client_id, service_id, updated_at |
+| 7 | `test_patch_status_sla_disappears_after_confirmed` | после new→confirmed запись исчезает из SLA unconfirmed |
+| 8 | `test_patch_status_audit_no_same_status` | no-op (same status) → ошибка, нет записи с old_status==new_status |
+| 9 | `test_patch_status_ws_receives_event_e2e` (integration) | Полный E2E: PATCH → WS получает событие; реальный Redis (testcontainers) |
+| 10 | `test_patch_status_external_integration_fail_safe` | при падении интеграции PATCH успешен, статус изменён |
+
+**Результат:** 18/18 тестов PATCH status проходят. Модуль appointments lifecycle закрыт тестами.
+
+---
+
+## 2026-03-07 — Integration test: PATCH status → WS e2e с реальным Redis
+
+## 2026-03-07 — Critical audit risk: TELEGRAM_WEBHOOK_SECRET обязателен в production
+
+**Задача:** Закрыть critical-риск из аудита — TELEGRAM_WEBHOOK_SECRET обязателен в production, webhook защищён.
+
+**Путь к тестам:** `backend/tests/test_webhook_security.py`
+
+**Имена тестов:**
+- `test_webhook_503_in_production_when_secret_missing` — production + secret отсутствует → 503, webhook не обрабатывает
+- `test_webhook_403_when_secret_required_but_header_missing` — secret задан, заголовок отсутствует → 403
+- `test_webhook_403_when_secret_required_but_header_wrong` — secret задан, заголовок неверный → 403
+- `test_webhook_200_when_secret_correct` — secret задан и заголовок корректный → 200, webhook обработан
+
+**Режим:** fail-fast при старте (config) + reject на endpoint level (webhook). Двойная защита.
+
+**Asserts:**
+- 503 при production без secret
+- 403 при отсутствии/неверном заголовке `X-Telegram-Bot-Api-Secret-Token`
+- 200 при корректном secret в заголовке
+
+---
+
+## 2026-03-07 — Integration test: PATCH status → WS e2e с реальным Redis
+
+**Задача:** Закрыть пункт 9 как полноценный E2E — WebSocket-клиент реально получает событие после PATCH.
+
+**Путь к тесту:** `backend/tests/integration/test_patch_status_ws_e2e.py`
+
+**Запуск Redis:**
+- **testcontainers** (по умолчанию): Docker поднимает `redis:7-alpine` автоматически. Требуется Docker.
+- **Альтернатива:** `docker-compose up -d redis` — тогда тест можно адаптировать под `REDIS_HOST=localhost`.
+
+**Запуск теста:**
+```bash
+cd backend
+python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
+```
+
+**Имя теста:** `test_patch_status_ws_receives_event_e2e`
+
+**Проверки:**
+- `assert patch_res.status_code == 200` — PATCH успешен
+- `assert raw_msg` — WS-клиент получил сообщение
+- `assert payload["type"] == "appointment_status_updated"`
+- `assert payload.get("appointment_id") == appt_id or payload.get("id") == appt_id`
+- `assert payload["old_status"] == "new"` и `assert payload["new_status"] == "confirmed"`
+- tenant scope: WS подписан на `appointments_updates:{tenant_id}`, событие приходит только в контексте tenant
+
+**Инфраструктура:**
+- `tests/integration/conftest.py` — переопределяет mock Redis, поднимает testcontainers Redis, сбрасывает RedisService._pool перед WS (чтобы избежать "different loop")
+- `pytest.ini` — добавлен маркер `integration`
+- `requirements.txt` — `testcontainers>=4.0`
+
+---
+
+## 2026-03-07 — Critical audit risk: TELEGRAM_WEBHOOK_SECRET обязателен в production
+
+**Задача:** Закрыть critical-риск из аудита — TELEGRAM_WEBHOOK_SECRET обязателен в production, webhook защищён.
+
+**Путь к тестам:** `backend/tests/test_webhook_security.py`
+
+**Имена тестов:**
+- `test_webhook_503_in_production_when_secret_missing` — production + secret отсутствует → 503, webhook не обрабатывает
+- `test_webhook_403_when_secret_required_but_header_missing` — secret задан, заголовок отсутствует → 403
+- `test_webhook_403_when_secret_required_but_header_wrong` — secret задан, заголовок неверный → 403
+- `test_webhook_200_when_secret_correct` — secret задан и заголовок корректный → 200, webhook обработан
+
+**Режим:** fail-fast при старте (config) + reject на endpoint level (webhook). В production без secret приложение не стартует (ValueError в Settings.__init__). На endpoint — 503 если production без secret, 403 если secret задан но заголовок отсутствует/неверный.
+
+**Asserts:**
+- 503 + detail "Webhook secret is not configured" при production без secret
+- 403 + detail "Forbidden" при отсутствующем или неверном заголовке
+- 200 + status "ok" при корректном secret в заголовке `X-Telegram-Bot-Api-Secret-Token`
+
+---
+
+## 2026-03-07 — Critical audit risk: external_integration fail-safe на create flow
+
+**Задача:** Закрыть второй critical-риск — external_integration_service не должен ронять create flow при ошибке интеграции.
+
+**Путь к тестам:** `backend/tests/test_external_integration_fail_safe.py`
+
+**Имена тестов:**
+- `test_create_succeeds_despite_integration_runtime_error` — интеграция падает (RuntimeError) → create 200, запись создана
+- `test_create_record_persisted_in_db_despite_integration_failure` — интеграция падает → запись реально в БД
+- `test_create_no_500_on_name_error` — интеграция падает с NameError → нет 500, create 200
+- `test_create_integration_error_logged` — ошибка интеграции логируется, flow успешен
+
+**Asserts:**
+- `assert response.status_code == 200` — create успешен несмотря на падение интеграции
+- `assert appt is not None` — запись сохранена в БД (select по id)
+- `assert response.status_code == 200` при NameError — нет 500
+- `mock_logger.error.assert_called_once()` — ошибка логируется
+
+---
+
+## 2026-03-07 — High-risk audit: WebSocket auth переведён на cookie-based
+
+**Задача:** Закрыть high-risk из аудита — убрать передачу JWT/ticket в query string, перевести WS-аутентификацию на HttpOnly cookie.
+
+**Выбрано:** cookie auth (login уже ставит cookie, same-origin WS отправляет её автоматически).
+
+**Изменения:**
+- `backend/app/api/endpoints/ws.py` — reject `?token=` и `?ticket=` в query (4401); auth только из cookie
+- `backend/app/services/ws_auth_resolver.py` — `resolve_ws_auth_from_cookie(cookie_token)`, `_extract_cookie_from_scope`
+- `frontend/src/contexts/WebSocketContext.tsx` — убраны `fetchWsTicket()` и query param; connect по URL, cookie отправляется автоматически
+- `backend/tests/test_ws_ticket_ws_connect.py` — `test_ws_connect_with_ticket_success` заменён на `test_ws_connect_with_ticket_in_query_rejected` (4401)
+- `frontend/src/contexts/WebSocketContext.test.tsx` — переведён на cookie auth (no api.post, no ?ticket= в URL)
+
+**Путь к тестам:**
+- Backend: `backend/tests/test_ws_cookie_auth.py`, `backend/tests/test_ws_ticket_ws_connect.py`
+- Frontend: `frontend/src/contexts/WebSocketContext.test.tsx`
+
+**Имена тестов (backend):**
+- `test_ws_connect_without_cookie_rejected` — без cookie → 4401
+- `test_ws_connect_with_valid_cookie_success` — с валидной cookie → успех
+- `test_ws_connect_query_string_token_rejected` — `?token=` → 4401
+- `test_ws_connect_query_string_ticket_rejected` — `?ticket=` → 4401
+- `test_ws_tenant_channel_from_cookie` — tenant context из cookie, подписка в нужный channel
+- `test_ws_connect_with_ticket_in_query_rejected` — ticket в URL → 4401
+- `test_ws_connect_without_ticket_returns_4401` — без cookie → 4401
+- `test_ws_connect_with_legacy_token_returns_4401` — `?token=` → 4401
+
+**Имена тестов (frontend):**
+- `connects with cookie auth (no ticket/token in URL)` — URL без ?ticket= и token=
+- `on disconnect schedules reconnect with same URL (cookie auth)` — reconnect без ticket
+
+**Asserts:**
+- reject без cookie (4401)
+- success с валидной auth-cookie
+- query-string token/ticket больше не принимается (4401)
+- tenant channel корректен при cookie auth
+
+**Примечание:** Endpoint `POST /ws-ticket` оставлен (может использоваться для legacy/альтернативных клиентов), но WS endpoint его в query string не принимает.
+
+---
+
+## 2026-03-07 — High-risk audit: auth storage — cookie-only, без localStorage
+
+**Задача:** Закрыть high-risk из аудита — убрать хранение access token в localStorage, перевести фронт полностью на cookie-only auth flow.
+
+**Состояние:** Фронт уже использовал cookie (api с `withCredentials: true`, без Authorization header). Legacy-код в e2e helper удалён.
+
+**Изменения:**
+- `frontend/e2e/helpers/auth.ts` — убрана legacy-логика: localStorage.setItem, ручная инъекция cookie из body.access_token. Login опирается на Set-Cookie из ответа backend.
+- `frontend/src/test/auth-storage.test.tsx` — новый набор тестов для cookie-only auth.
+
+**Путь к тестам:** `frontend/src/test/auth-storage.test.tsx`
+
+**Имена тестов:**
+- `login flow does not write token to localStorage` — login не пишет token/access_token в localStorage
+- `bootstrap session uses /me endpoint` — bootstrap/reload идёт через /me
+- `logout clears auth state without localStorage` — logout очищает state, без обращения к localStorage
+- `no legacy token storage in auth-related source files` — в api.ts, AuthContext.tsx, LoginPage.tsx нет localStorage.getItem/setItem для token/access_token
+
+**Asserts:**
+- assert: login не пишет в localStorage (spy на setItem, filter по 'token'/'access_token' → length 0)
+- assert: bootstrap вызывает api.get('/me')
+- assert: logout вызывает /auth/logout, state очищен, localStorage не использован
+- assert: статическая проверка — в auth-файлах нет паттернов localStorage для token
+
+**Примечание:** Backend login возвращает `{"status": "ok"}` и ставит HttpOnly cookie. Protected API calls работают через cookie credentials (withCredentials: true).
+
+---
+
+## 2026-03-07 — Этап 2: Production Infrastructure
+
+**Реализовано:**
+- Health endpoints: GET /health, /live, /ready
+- /live — liveness без проверок зависимостей
+- /ready — readiness с проверкой PostgreSQL и Redis, 503 при недоступности
+- Production config fail-fast: SECRET_KEY, TELEGRAM_WEBHOOK_SECRET, ENCRYPTION_KEY
+- Graceful shutdown: RedisService.close(), engine.dispose() в lifespan
+- docker-compose.prod.yml: healthcheck /ready для api, pg_isready для db, redis-cli ping для redis
+- backend/.env.example: production-переменные
+- backend/tests/test_infra.py: 7 тестов (health, live, ready, DB down, Redis down, config fail-fast)
+
+**Пути:** backend/app/main.py, backend/app/core/config.py, docker-compose.prod.yml, backend/.env.example, backend/tests/test_infra.py, backend/tests/conftest.py
+
+**Deliverable:** docs/STAGE2_INFRA_DELIVERABLE.md
+
+---
+
+## 2026-03-07 — CSRF audit: cookie-auth — защита НЕ реализована (security gap)
+
+**Задача:** Зафиксировать состояние CSRF-защиты после перехода на cookie-only auth.
+
+**Реализована ли CSRF-защита сейчас:** **НЕТ.**
+
+- Cookie использует `SameSite=Lax` — частичная митигация (cross-site POST с другого origin обычно не отправляет cookie в современных браузерах).
+- Нет CSRF token, нет проверки заголовка X-CSRF-Token, нет double-submit cookie.
+- **Security gap:** mutating-запросы (POST, PATCH, DELETE) с auth-cookie проходят без CSRF-валидации.
+
+**Путь к тестам:** `backend/tests/test_csrf_cookie_auth.py`
+
+**Имена тестов:**
+- `test_read_only_me_works_without_csrf` — GET /me (read-only) работает с cookie, без CSRF header
+- `test_mutating_logout_currently_accepts_without_csrf` — POST /auth/logout: сейчас проходит с cookie only
+- `test_mutating_create_appointment_currently_accepts_without_csrf` — POST /appointments/: сейчас проходит с cookie only
+- `test_mutating_patch_status_currently_accepts_without_csrf` — PATCH /appointments/{id}/status: сейчас проходит с cookie only
+
+**Asserts (текущее состояние):**
+- assert: read-only endpoint (GET /me) работает без CSRF → 200
+- assert: mutating endpoints (logout, create, patch status) принимают запросы с cookie без CSRF header → 200 (baseline; при добавлении CSRF ожидать 403)
+
+**Когда CSRF будет реализован — добавить:**
+- `test_mutating_without_csrf_header_rejected` — без CSRF header → 403
+- `test_mutating_with_csrf_header_succeeds` — с корректным CSRF header → 200/204
+- Read-only (GET) не должен требовать CSRF.
+
+---
+
+## 2026-03-07 — Этап 1: Security Hardening (DONE)
+
+**Реализовано:**
+- **CSRF:** double-submit cookie, X-CSRF-Token header, проверка для POST/PATCH/PUT/DELETE, GET без CSRF. Login исключён (нет сессии до входа).
+- **Secure cookie:** auth cookie — HttpOnly, Secure в prod, SameSite=Lax; CSRF cookie — не HttpOnly (JS читает), Secure в prod, SameSite=Lax.
+- **Rate limiting:** login 10/min, webhook 120/min. Conftest отключает limiter для большинства тестов.
+- **CORS:** без wildcard с credentials в production (ValueError при старте). Доверенные origins: localhost:5173, 5174, 3000.
+- **Security tests:** CSRF, cookie flags, rate limit 429, CORS policy.
+
+**Deliverable:** `docs/STAGE1_SECURITY_DELIVERABLE.md`
+
+---
+
 ## Roadmap: порядок реализации
 
 ### Блок A. Продуктовая логика (in progress)

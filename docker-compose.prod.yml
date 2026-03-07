@@ -45,7 +45,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/ready', timeout=5); exit(0 if r.getcode()==200 else 1)\" 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

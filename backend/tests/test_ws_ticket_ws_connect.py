@@ -50,30 +50,22 @@ def _patch_redis(monkeypatch: pytest.MonkeyPatch) -> _DummyRedis:
 
 
 @pytest.mark.asyncio
-async def test_ws_connect_with_ticket_success(
-    client: AsyncClient,
+async def test_ws_connect_with_ticket_in_query_rejected(
+    client_auth: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    await client.post(
-        f"{settings.API_V1_STR}/login/access-token",
-        data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-
-    ws_ticket_response = await client.post(f"{settings.API_V1_STR}/ws-ticket")
+    """?ticket= in query string must be rejected (4401). Cookie auth only."""
+    ws_ticket_response = await client_auth.post(f"{settings.API_V1_STR}/ws-ticket")
     assert ws_ticket_response.status_code == 200
     ws_ticket = ws_ticket_response.json()["ticket"]
 
     _patch_redis(monkeypatch)
 
     with TestClient(app) as sync_client:
-        with sync_client.websocket_connect(f"{settings.API_V1_STR}/ws?ticket={ws_ticket}"):
-            pass
-
         with pytest.raises(WebSocketDisconnect) as exc:
             with sync_client.websocket_connect(f"{settings.API_V1_STR}/ws?ticket={ws_ticket}"):
                 pass
-        assert exc.value.code == 4403
+        assert exc.value.code == 4401
 
 
 @pytest.mark.asyncio
@@ -91,16 +83,11 @@ async def test_ws_connect_without_ticket_returns_4401(
 
 @pytest.mark.asyncio
 async def test_ws_connect_with_legacy_token_returns_4401(
-    client: AsyncClient,
+    client_auth: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
     """Legacy ?token= must no longer be accepted — expect 4401."""
-    await client.post(
-        f"{settings.API_V1_STR}/login/access-token",
-        data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-    access_token = client.cookies.get("access_token")
+    access_token = client_auth.cookies.get("access_token")
 
     _patch_redis(monkeypatch)
 

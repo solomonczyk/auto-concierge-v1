@@ -76,11 +76,39 @@ WEBHOOK_PROCESSED_TOTAL = Counter(
 )
 
 # ---------------------------------------------------------------------------
-# HTTP request duration (optional, lightweight)
+# HTTP requests
 # ---------------------------------------------------------------------------
+HTTP_REQUESTS_TOTAL = Counter(
+    "http_requests_total",
+    "Total HTTP requests",
+    ["method", "path", "status"],
+)
 HTTP_REQUEST_DURATION = Histogram(
     "http_request_duration_seconds",
     "HTTP request latency",
     ["method", "path", "status"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+)
+HTTP_ERROR_TOTAL = Counter(
+    "http_errors_total",
+    "HTTP 5xx errors",
+    ["method", "path"],
+)
+
+# ---------------------------------------------------------------------------
+# Appointment status transitions
+# ---------------------------------------------------------------------------
+APPOINTMENT_STATUS_TRANSITIONS_TOTAL = Counter(
+    "appointment_status_transitions_total",
+    "Appointment status changes (PATCH / create)",
+    ["tenant_id", "old_status", "new_status"],
+)
+
+# ---------------------------------------------------------------------------
+# WS active connections (gauge)
+# ---------------------------------------------------------------------------
+WS_ACTIVE_CONNECTIONS = Gauge(
+    "ws_active_connections",
+    "Current active WebSocket connections",
+    ["tenant_id"],
 )

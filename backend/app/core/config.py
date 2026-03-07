@@ -113,6 +113,8 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_WEBHOOK_SECRET must be set in production environment!")
         if self.is_production and not self.ENCRYPTION_KEY:
             raise ValueError("ENCRYPTION_KEY must be set in production environment!")
+        if self.is_production and self.SECRET_KEY in ("", "dev-secret-key-change-in-production"):
+            raise ValueError("SECRET_KEY must be set to a secure value in production environment!")
 
     class Config:
         case_sensitive = True

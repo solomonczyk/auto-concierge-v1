@@ -95,6 +95,14 @@ async def override_get_db():
 
 app.dependency_overrides[get_db] = override_get_db
 
+# WS cookie auth uses async_session_local — must use test DB
+import app.services.ws_auth_resolver as _ws_auth_mod
+_ws_auth_mod.async_session_local = test_async_session
+
+# Health/ready endpoints use async_session_local and RedisService — must use test DB and mock Redis
+import app.db.session as _db_session_mod
+_db_session_mod.async_session_local = test_async_session
+
 # Disable rate limiter for tests (avoids 429 on repeated login)
 from app.api.endpoints import login
 login.limiter.enabled = False
@@ -107,14 +115,16 @@ def mock_redis_notifications_ratelimit():
     fake_redis.set = AsyncMock(return_value=True)
     fake_redis.delete = AsyncMock(return_value=None)
     fake_redis.publish = AsyncMock(return_value=1)
-    with patch("app.api.endpoints.appointments.RedisService") as mock_redis_svc:
+    fake_redis.ping = AsyncMock(return_value=True)
+    with patch("app.services.redis_service.RedisService") as mock_redis_svc:
         mock_redis_svc.get_redis.return_value = fake_redis
-        with patch("app.api.endpoints.ws.RedisService", mock_redis_svc):
-            with patch("app.services.notification_service.NotificationService.send_booking_confirmation", new_callable=AsyncMock):
-                with patch("app.services.notification_service.NotificationService.notify_admin", new_callable=AsyncMock):
-                    with patch("app.services.notification_service.NotificationService.notify_client_status_change", new_callable=AsyncMock):
-                        with patch("app.api.endpoints.appointments.external_integration.enqueue_appointment", new_callable=AsyncMock):
-                            yield
+        with patch("app.api.endpoints.appointments.RedisService", mock_redis_svc):
+            with patch("app.api.endpoints.ws.RedisService", mock_redis_svc):
+                with patch("app.services.notification_service.NotificationService.send_booking_confirmation", new_callable=AsyncMock):
+                    with patch("app.services.notification_service.NotificationService.notify_admin", new_callable=AsyncMock):
+                        with patch("app.services.notification_service.NotificationService.notify_client_status_change", new_callable=AsyncMock):
+                            with patch("app.api.endpoints.appointments.external_integration.enqueue_appointment", new_callable=AsyncMock):
+                                yield
 
 
 @pytest.fixture(scope="session")
@@ -211,6 +221,22 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Provide HTTP client for API testing"""
     async with AsyncClient(app=app, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture(scope="function")
+async def client_auth(client: AsyncClient) -> AsyncClient:
+    """Client with admin login + X-CSRF-Token header for mutating requests."""
+    from app.core.config import settings
+    res = await client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": "admin", "password": "admin"},
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert res.status_code == 200
+    csrf = res.cookies.get("csrf_token")
+    assert csrf, "Login must set csrf_token cookie"
+    client.headers["X-CSRF-Token"] = csrf
+    return client
 
 
 @pytest.fixture

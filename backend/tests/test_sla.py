@@ -13,7 +13,7 @@ from app.models.models import Appointment, AppointmentStatus, Client, Service, S
 
 @pytest.mark.asyncio
 async def test_sla_unconfirmed_returns_only_overdue_new_appointments(
-    client: AsyncClient,
+    client_auth: AsyncClient,
     db_session: AsyncSession,
 ):
     """
@@ -71,12 +71,7 @@ async def test_sla_unconfirmed_returns_only_overdue_new_appointments(
 
     await db_session.commit()
 
-    await client.post(
-        f"{settings.API_V1_STR}/login/access-token",
-        data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-    res = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?minutes=15")
+    res = await client_auth.get(f"{settings.API_V1_STR}/sla/unconfirmed?minutes=15")
     assert res.status_code == 200
     data = res.json()
 
@@ -90,40 +85,14 @@ async def test_sla_unconfirmed_returns_only_overdue_new_appointments(
 
 
 @pytest.mark.asyncio
-async def test_sla_unconfirmed_limit_validation(client: AsyncClient):
+async def test_sla_unconfirmed_limit_validation(client_auth: AsyncClient):
     """limit must be 1..100: limit=0 and limit=101 return 422, limit=50 returns 200."""
-    await client.post(
-        f"{settings.API_V1_STR}/login/access-token",
-        data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-
-    res_0 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=0")
+    res_0 = await client_auth.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=0")
     assert res_0.status_code == 422, f"limit=0: expected 422, got {res_0.status_code}, body={res_0.json()}"
 
-    res_101 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=101")
+    res_101 = await client_auth.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=101")
     assert res_101.status_code == 422, f"limit=101: expected 422, got {res_101.status_code}, body={res_101.json()}"
 
-    res_50 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=50")
-    assert res_50.status_code == 200, f"limit=50: expected 200, got {res_50.status_code}, body={res_50.json()}"
-    assert isinstance(res_50.json(), list)
-
-
-@pytest.mark.asyncio
-async def test_sla_unconfirmed_limit_validation(client: AsyncClient):
-    """limit must be 1..100: limit=0 and limit=101 return 422, limit=50 passes."""
-    await client.post(
-        f"{settings.API_V1_STR}/login/access-token",
-        data={"username": "admin", "password": "admin"},
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-
-    res_0 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=0")
-    assert res_0.status_code == 422, f"limit=0: expected 422, got {res_0.status_code}, body={res_0.json()}"
-
-    res_101 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=101")
-    assert res_101.status_code == 422, f"limit=101: expected 422, got {res_101.status_code}, body={res_101.json()}"
-
-    res_50 = await client.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=50")
+    res_50 = await client_auth.get(f"{settings.API_V1_STR}/sla/unconfirmed?limit=50")
     assert res_50.status_code == 200, f"limit=50: expected 200, got {res_50.status_code}, body={res_50.json()}"
     assert isinstance(res_50.json(), list)
