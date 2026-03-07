@@ -259,9 +259,37 @@ async def create_appointment(
         result = await db.execute(stmt)
         final_appt = result.scalar_one()
         
+        from app.models.models import AppointmentHistory
+
+        db.add(AppointmentHistory(
+            appointment_id=final_appt.id,
+            tenant_id=tenant_id,
+            old_status="",
+            new_status=AppointmentStatus.NEW.value,
+            changed_by_user_id=current_user.id,
+            source="dashboard",
+        ))
+        await db.commit()
+
         APPOINTMENTS_CREATED_TOTAL.labels(
             tenant_id=str(tenant_id), source="dashboard"
         ).inc()
+
+        try:
+            redis_pub = RedisService.get_redis()
+            ws_msg = {
+                "type": "appointment_created",
+                "data": {
+                    "id": final_appt.id,
+                    "shop_id": final_appt.shop_id,
+                    "status": final_appt.status.value,
+                },
+            }
+            await redis_pub.publish(
+                f"appointments_updates:{tenant_id}", json.dumps(ws_msg)
+            )
+        except Exception:
+            pass
 
         try:
             external_integration.enqueue_appointment(final_appt.id, tenant_id)
@@ -285,62 +313,89 @@ async def update_appointment_status(
     id: int,
     status_update: AppointmentStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    tenant_id: int = Depends(deps.get_current_tenant_id)
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
-    from sqlalchemy.orm import joinedload
+    from app.services.appointment_state_machine import validate_transition, TransitionError
+    from app.models.models import AppointmentHistory
+
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
-        joinedload(Appointment.service)
+        joinedload(Appointment.service),
     ).where(and_(Appointment.id == id, Appointment.tenant_id == tenant_id))
-    
+
     result = await db.execute(stmt)
     appt = result.scalar_one_or_none()
-    
+
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
 
     old_status = appt.status
-    appt.status = status_update.status
-    if appt.status == AppointmentStatus.COMPLETED:
+    target = status_update.status
+
+    try:
+        validate_transition(
+            current=old_status,
+            target=target,
+            role=current_user.role,
+        )
+    except TransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.message,
+        )
+
+    appt.status = target
+    if target == AppointmentStatus.COMPLETED:
         appt.completed_at = datetime.now(tz.utc)
     elif old_status == AppointmentStatus.COMPLETED:
         appt.completed_at = None
 
+    db.add(AppointmentHistory(
+        appointment_id=appt.id,
+        tenant_id=tenant_id,
+        old_status=old_status.value,
+        new_status=target.value,
+        changed_by_user_id=current_user.id,
+        source="api",
+    ))
+
     await db.commit()
     await db.refresh(appt)
-    
-    if appt.status != old_status and appt.client.telegram_id:
+
+    if appt.client and appt.client.telegram_id:
         from app.services.notification_service import NotificationService
         import asyncio
-        
-        # Properly handle async notification with error handling
+
         async def notify_client():
             try:
                 await NotificationService.notify_client_status_change(
                     chat_id=appt.client.telegram_id,
                     service_name=appt.service.name,
-                    new_status=appt.status.value
+                    new_status=target.value,
                 )
             except Exception as notify_error:
-                # Log but don't fail the main request
-                import logging
-                logging.getLogger(__name__).error(
-                    f"Failed to send notification for appointment {appt.id}: {notify_error}"
+                logger.error(
+                    "Notification failed for appointment %s: %s",
+                    appt.id,
+                    notify_error,
                 )
-        
+
         asyncio.create_task(notify_client())
-        
+
     redis = RedisService.get_redis()
     message = {
-        "type": "STATUS_UPDATE",
+        "type": "appointment_status_changed",
         "data": {
             "id": appt.id,
             "shop_id": appt.shop_id,
-            "status": appt.status.value
-        }
+            "old_status": old_status.value,
+            "new_status": target.value,
+            "changed_by": current_user.id,
+        },
     }
     await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
-    
+
     return appt
 
 def _should_show_completed_in_kanban(

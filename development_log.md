@@ -1034,3 +1034,68 @@ Endpoint: `GET /metrics` → Prometheus text format.
 - Workflow: `--reporter=list,html` (output в логах + артефакт).
 
 **Локальная проверка**: 4 passed, 3 skipped (webhook + slots), 0 failed.
+
+### 2026-03-07 — Appointment lifecycle: state machine, audit trail, SLA, WS events
+
+#### 1. Статусы и state machine
+
+`AppointmentStatus` расширен: добавлен `NO_SHOW = "no_show"`.
+
+**Граф переходов:**
+
+```
+new → confirmed, cancelled
+confirmed → in_progress, cancelled, no_show
+in_progress → completed, cancelled
+waitlist → new, cancelled
+completed → (terminal)
+cancelled → (terminal)
+no_show → (terminal)
+```
+
+**Role-based guards** (`appointment_state_machine.py`):
+
+| Role | Может установить |
+|---|---|
+| ADMIN / SUPERADMIN | любой допустимый статус |
+| MANAGER | confirmed, cancelled, no_show |
+| STAFF | in_progress, completed |
+| SYSTEM | no_show, cancelled |
+
+Запрещённые переходы (примеры): `done→new`, `cancelled→confirmed`, `done→in_progress`.
+
+#### 2. Audit trail
+
+Новая таблица `appointment_history`:
+- `appointment_id`, `tenant_id`, `old_status`, `new_status`
+- `changed_by_user_id` (null для system), `source` (api / dashboard / system_sla)
+- `created_at`
+
+Миграция: `c9d0e1f2a3b4_add_appointment_history_and_no_show.py`.
+
+Каждый `PATCH /{id}/status` и `POST /appointments/` создаёт запись в `appointment_history`.
+
+#### 3. WS events (типизированные)
+
+| Event type | Когда |
+|---|---|
+| `appointment_created` | Создание через dashboard |
+| `appointment_status_changed` | `PATCH /{id}/status` (включает `old_status`, `new_status`, `changed_by`) |
+
+#### 4. SLA service (`sla_service.py`)
+
+- `check_unconfirmed_appointments()` — находит `new` записи старше 15 минут.
+- `auto_no_show()` — переводит `confirmed` записи в `no_show` если `start_time < now`.
+- Обе функции создают `AppointmentHistory` записи с `source=system_sla`.
+- Designed for APScheduler periodic calls.
+
+#### 5. Endpoint hardened
+
+`PATCH /{id}/status`:
+- State machine validation → `422` при невалидном переходе.
+- Role check → `422` при нехватке прав.
+- Audit trail запись.
+- Typed WS event.
+- `current_user` dependency добавлен для role checking.
+
+**Тесты**: 21 новых (state machine) + 32 existing = 53/53 passed.

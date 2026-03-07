@@ -11,6 +11,7 @@ class AppointmentStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    NO_SHOW = "no_show"
     WAITLIST = "waitlist"
 
 class TenantStatus(str, Enum):
@@ -144,6 +145,23 @@ class Appointment(Base):
     shop: Mapped["Shop"] = relationship("Shop", back_populates="appointments")
     client: Mapped["Client"] = relationship("Client", back_populates="appointments")
     service: Mapped["Service"] = relationship("Service", back_populates="appointments")
+    history: Mapped[List["AppointmentHistory"]] = relationship("AppointmentHistory", back_populates="appointment", lazy="dynamic")
+
+
+class AppointmentHistory(Base):
+    """Immutable audit log of every appointment status change."""
+    __tablename__ = "appointment_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    appointment_id: Mapped[int] = mapped_column(ForeignKey("appointments.id"), nullable=False, index=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    old_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    new_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    changed_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="api")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    appointment: Mapped["Appointment"] = relationship("Appointment", back_populates="history")
 
 
 class TenantSettings(Base):
