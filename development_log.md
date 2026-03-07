@@ -1026,3 +1026,11 @@ Endpoint: `GET /metrics` → Prometheus text format.
 - Screenshot подтвердил: production показывал страницу логина после `page.goto('/concierge/')` несмотря на cookie.
 
 **Локальная проверка против production**: 5 passed, 2 skipped (webhook secret).
+
+**Итерация 3**: `webapp-booking` — graceful skip при отсутствии слотов.
+- Корень CI failure: `webapp-booking.spec.ts:56` — нет свободных слотов на production.
+- Тест ждал `button` с текстом `/^\d{2}:\d{2}$/` (время) — timeout 20s → FAIL × 3 retries.
+- Fix: если слотов нет → `test.skip('No available time slots on production')`.
+- Workflow: `--reporter=list,html` (output в логах + артефакт).
+
+**Локальная проверка**: 4 passed, 3 skipped (webhook + slots), 0 failed.
