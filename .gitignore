@@ -25,6 +25,9 @@ build/
 postgres_data/
 infra_data/
 
+# DB backups (may contain sensitive data)
+backups/
+
 # SSL Certificates
 *.pem
 *.key

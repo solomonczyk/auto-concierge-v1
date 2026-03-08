@@ -1,6 +1,33 @@
-# Auto Concierge V1
+# Auto-Concierge Core
 
-Веб-приложение для управления автосервисом с интеграцией Telegram бота.
+AI-assisted appointment orchestration platform for service businesses.
+
+## Project Model
+
+This repository contains the **core platform**.
+
+Architecture layers:
+
+- **Core:** backend/, frontend/
+- **Configs:** configs/
+- **Extensions:** extensions/
+- **Documentation:** docs/
+
+## Baseline
+
+Frozen baseline snapshot: `auto-concierge-baseline-2026-03`
+
+See: [docs/BASELINE_MANIFEST.md](docs/BASELINE_MANIFEST.md)
+
+## Architecture
+
+[docs/CORE_ARCHITECTURE.md](docs/CORE_ARCHITECTURE.md)
+
+## Customization rules
+
+[docs/CUSTOMIZATION_RULES.md](docs/CUSTOMIZATION_RULES.md)
+
+---
 
 ## Возможности
 

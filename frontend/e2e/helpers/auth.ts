@@ -5,11 +5,9 @@ const adminPass = process.env.PLAYWRIGHT_ADMIN_PASS || 'admin'
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
 
 /**
- * Login via API — supports both cookie-based and legacy JSON-token auth.
- *
- * Cookie-based (new): backend sets Set-Cookie, browser picks it up.
- * Legacy JSON (old):  backend returns { access_token }, we inject it
- *                     as a cookie manually so the SPA can read it.
+ * Login via API — cookie-based auth only.
+ * Backend sets Set-Cookie; Playwright request context stores it; page.goto sends cookies.
+ * No localStorage, no token in URL/body.
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
   const apiUrl = `${baseURL.replace(/\/$/, '')}/concierge/api/v1/login/access-token`
@@ -20,27 +18,7 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   if (res.status() !== 200) {
     throw new Error(`Login API returned ${res.status()}`)
   }
-
-  const body = await res.json()
-
-  if (body.access_token) {
-    const domain = new URL(baseURL).hostname
-    await page.context().addCookies([
-      {
-        name: 'access_token',
-        value: body.access_token,
-        domain,
-        path: '/',
-        httpOnly: true,
-        secure: baseURL.startsWith('https'),
-        sameSite: 'Lax',
-      },
-    ])
-    // Legacy frontend reads token from localStorage
-    const token = body.access_token
-    await page.addInitScript((t) => { localStorage.setItem('token', t) }, token)
-  }
-
+  // Backend sets Set-Cookie; request context stores it for same-origin
   await page.goto('/concierge/')
   await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
 }

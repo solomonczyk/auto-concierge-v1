@@ -7,7 +7,7 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_create_service(client: AsyncClient, auth_headers: dict):
+async def test_create_service(client_auth: AsyncClient):
     """Test creating a new service."""
     service_data = {
         "name": "Test Service",
@@ -16,10 +16,9 @@ async def test_create_service(client: AsyncClient, auth_headers: dict):
         "duration_minutes": 60
     }
     
-    response = await client.post(
+    response = await client_auth.post(
         "/api/v1/services/",
         json=service_data,
-        headers=auth_headers
     )
     
     assert response.status_code == 200
@@ -54,7 +53,7 @@ async def test_create_service_unauthorized(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_service_validation(client: AsyncClient, auth_headers: dict):
+async def test_service_validation(client_auth: AsyncClient):
     """Test service validation - empty name."""
     service_data = {
         "name": "",
@@ -62,10 +61,9 @@ async def test_service_validation(client: AsyncClient, auth_headers: dict):
         "duration_minutes": 60
     }
     
-    response = await client.post(
+    response = await client_auth.post(
         "/api/v1/services/",
         json=service_data,
-        headers=auth_headers
     )
     
     # Should fail validation

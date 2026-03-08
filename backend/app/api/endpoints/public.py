@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
-from app.core.rate_limit import limiter
+from app.core.rate_limit import PUBLIC_BOOKING_RATE_LIMIT, limiter
 from app.core.slots import get_available_slots
 from app.core.tenant_resolver import get_tenant_id_by_slug
 from app.db.session import get_db
@@ -100,6 +100,9 @@ class AppointmentRead(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+    integration_status: Optional[str] = None
+    last_integration_error: Optional[str] = None
+    last_integration_attempt_at: Optional[datetime] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
 
@@ -153,7 +156,7 @@ async def get_public_slots(
 # ─── POST /appointments/public ────────────────────────────────────────────────
 
 @router.post("/appointments/public", response_model=AppointmentRead)
-@limiter.limit("10/minute")
+@limiter.limit(PUBLIC_BOOKING_RATE_LIMIT)
 async def create_public_appointment(
     request: Request,
     payload: PublicBookingCreate,
@@ -287,14 +290,26 @@ async def create_public_appointment(
         end_time_utc = end_time_naive.replace(tzinfo=tz.utc)
 
         if not payload.is_waitlist:
-            redis = RedisService.get_redis()
+            redis = None
             lock_key = f"booking_lock:{shop.id}:{start_time_utc.isoformat()}"
-            is_locked = await redis.set(lock_key, "1", nx=True, ex=10)
-            if not is_locked:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Это время сейчас бронируется. Попробуйте еще раз",
+            lock_acquired = False
+
+            try:
+                redis = RedisService.get_redis()
+                lock_acquired = bool(await redis.set(lock_key, "1", nx=True, ex=10))
+                if not lock_acquired:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Это время сейчас бронируется. Попробуйте еще раз",
+                    )
+            except HTTPException:
+                raise
+            except Exception as redis_error:
+                logger.warning(
+                    "Public booking lock layer unavailable, falling back to DB overlap check only: %s",
+                    redis_error,
                 )
+                redis = None
 
             try:
                 stmt_collide = select(Appointment).where(
@@ -314,8 +329,15 @@ async def create_public_appointment(
                 if res_collide.scalars().first():
                     raise HTTPException(status_code=409, detail="Это время уже занято")
             finally:
-                if not payload.appointment_id:
-                    await redis.delete(lock_key)
+                if redis and lock_acquired and not payload.appointment_id:
+                    try:
+                        await redis.delete(lock_key)
+                    except Exception as redis_error:
+                        logger.warning(
+                            "Public booking lock release failed for %s: %s",
+                            lock_key,
+                            redis_error,
+                        )
 
         status_val = AppointmentStatus.WAITLIST if payload.is_waitlist else (
             AppointmentStatus.CONFIRMED if payload.appointment_id else AppointmentStatus.NEW
@@ -427,7 +449,17 @@ async def create_public_appointment(
             joinedload(Appointment.service),
         ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
         result = await db.execute(stmt)
-        appt = result.scalar_one()
+        refreshed_appt = result.scalar_one_or_none()
+        if refreshed_appt is not None:
+            appt = refreshed_appt
+        else:
+            logger.warning(
+                "Public booking reread failed after commit, returning in-memory appointment id=%s tenant_id=%s",
+                appt.id,
+                tenant_id,
+            )
+            appt.client = client
+            appt.service = service
 
         # 8. Notifications
         from app.services.notification_service import NotificationService
@@ -466,7 +498,10 @@ async def create_public_appointment(
             except Exception as e:
                 logger.error(f"Notification error: {e}")
 
-        asyncio.create_task(notify())
+        try:
+            asyncio.create_task(notify())
+        except Exception as task_error:
+            logger.error(f"Notification task scheduling error: {task_error}")
 
         # 9. Redis Sync
         try:

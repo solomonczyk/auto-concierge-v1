@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     # Telegram admin chat ID for notifications (set in .env)
     ADMIN_CHAT_ID: Optional[int] = None
 
+    # Sentry (exception tracking)
+    SENTRY_DSN: Optional[str] = None
+
     # Environment mode
     ENVIRONMENT: str = "development"
     # PUBLIC_TENANT_ID is deprecated — tenant is now resolved via slug in the URL

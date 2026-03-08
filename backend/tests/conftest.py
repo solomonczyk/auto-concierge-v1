@@ -124,7 +124,8 @@ def mock_redis_notifications_ratelimit():
                     with patch("app.services.notification_service.NotificationService.notify_admin", new_callable=AsyncMock):
                         with patch("app.services.notification_service.NotificationService.notify_client_status_change", new_callable=AsyncMock):
                             with patch("app.api.endpoints.appointments.external_integration.enqueue_appointment", new_callable=AsyncMock):
-                                yield
+                                    with patch("app.api.endpoints.appointments.external_integration.sync_appointment", new_callable=AsyncMock, return_value=(True, None)):
+                                        yield
 
 
 @pytest.fixture(scope="session")
@@ -223,10 +224,9 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield c
 
 
-@pytest.fixture(scope="function")
-async def client_auth(client: AsyncClient) -> AsyncClient:
-    """Client with admin login + X-CSRF-Token header for mutating requests."""
+async def _login_test_client(client: AsyncClient) -> AsyncClient:
     from app.core.config import settings
+
     res = await client.post(
         f"{settings.API_V1_STR}/login/access-token",
         data={"username": "admin", "password": "admin"},
@@ -237,6 +237,20 @@ async def client_auth(client: AsyncClient) -> AsyncClient:
     assert csrf, "Login must set csrf_token cookie"
     client.headers["X-CSRF-Token"] = csrf
     return client
+
+
+@pytest.fixture(scope="function")
+async def client_auth(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """Authenticated client isolated from the raw `client` fixture."""
+    async with AsyncClient(app=app, base_url="http://test") as c:
+        yield await _login_test_client(c)
+
+
+@pytest.fixture(autouse=True)
+async def legacy_client_auth_alias(request, client_auth: AsyncClient):
+    """Expose authenticated client as module-global `client_auth` for legacy tests."""
+    setattr(request.module, "client_auth", client_auth)
+    yield
 
 
 @pytest.fixture

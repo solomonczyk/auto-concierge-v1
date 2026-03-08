@@ -3,13 +3,13 @@ from datetime import datetime, timedelta, timezone as tz
 from zoneinfo import ZoneInfo
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, delete
 from sqlalchemy.orm import joinedload
 from app.db.session import get_db
 from app.api import deps
-from app.models.models import Appointment, AppointmentHistory, AppointmentStatus, Client, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
+from app.models.models import Appointment, AppointmentHistory, AppointmentStatus, Client, IntegrationStatus, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
 from app.services.redis_service import RedisService 
 from app.services.external_integration_service import external_integration
 from app.core.config import settings
@@ -24,6 +24,9 @@ from app.bot.tenant import get_tenant_shop
 from app.schemas.appointment_history import AppointmentHistoryRead
 from app.services.usage_service import check_appointments_limit, LimitExceededError
 from app.services.audit_service import log_audit
+from app.services.outbox_service import enqueue_appointment_created_event
+from app.services.appointment_integration_service import run_appointment_integration_sync
+from app.core.rate_limit import PUBLIC_BOOKING_RATE_LIMIT, limiter
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -84,6 +87,9 @@ class AppointmentRead(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+    integration_status: Optional[str] = None
+    last_integration_error: Optional[str] = None
+    last_integration_attempt_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
@@ -119,6 +125,7 @@ class AppointmentUpdate(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+
 
 @router.patch("/{id}", response_model=AppointmentRead)
 async def update_appointment(
@@ -162,35 +169,68 @@ async def update_appointment(
     await db.commit()
     
     # Re-fetch with relations to avoid lazy load errors in response validation
-    stmt = select(Appointment).options(
-        joinedload(Appointment.client), 
-        joinedload(Appointment.service)
-    ).where(Appointment.id == id)
-    result = await db.execute(stmt)
-    appt = result.scalar_one()
-    
-    await log_audit(
-        db,
-        tenant_id=tenant_id,
-        actor_user_id=current_user.id,
-        action="update",
-        entity_type="appointment",
-        entity_id=str(appt.id),
-        payload_after={"id": appt.id, "service_id": appt.service_id, "start_time": appt.start_time.isoformat()},
-        source="dashboard",
-    )
-    await db.commit()
+    try:
+        stmt = select(Appointment).options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service)
+        ).where(Appointment.id == id)
+        result = await db.execute(stmt)
+        refreshed_appt = result.scalar_one_or_none()
+        if refreshed_appt is not None:
+            appt = refreshed_appt
+        else:
+            logger.warning(
+                "Appointment patch reread failed after commit, returning in-memory appointment id=%s tenant_id=%s",
+                id,
+                tenant_id,
+            )
+    except Exception as reread_error:
+        logger.error(
+            "Appointment patch reread errored after commit appointment_id=%s tenant_id=%s: %s",
+            id,
+            tenant_id,
+            reread_error,
+        )
+
+    try:
+        await log_audit(
+            db,
+            tenant_id=tenant_id,
+            actor_user_id=current_user.id,
+            action="update",
+            entity_type="appointment",
+            entity_id=str(appt.id),
+            payload_after={"id": appt.id, "service_id": appt.service_id, "start_time": appt.start_time.isoformat()},
+            source="dashboard",
+        )
+        await db.commit()
+    except Exception as audit_error:
+        await db.rollback()
+        logger.error(
+            "Appointment patch audit commit failed after update appointment_id=%s tenant_id=%s: %s",
+            appt.id,
+            tenant_id,
+            audit_error,
+        )
 
     # Broadcast update
-    redis = RedisService.get_redis()
-    message = {
-        "type": "APPOINTMENT_UPDATED",
-        "data": {
-            "id": appt.id,
-            "shop_id": appt.shop_id
+    try:
+        redis = RedisService.get_redis()
+        message = {
+            "type": "APPOINTMENT_UPDATED",
+            "data": {
+                "id": appt.id,
+                "shop_id": appt.shop_id
+            }
         }
-    }
-    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+        await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+    except Exception as redis_error:
+        logger.error(
+            "Appointment patch redis publish failed appointment_id=%s tenant_id=%s: %s",
+            appt.id,
+            tenant_id,
+            redis_error,
+        )
     
     return appt
 
@@ -280,52 +320,88 @@ async def create_appointment(
             client_id=client.id,
             start_time=appt.start_time,
             end_time=end_time,
-            status=AppointmentStatus.NEW
+            status=AppointmentStatus.NEW,
+            integration_status=IntegrationStatus.PENDING,
         )
         
         db.add(new_appt)
         await db.commit()
         
         # Re-fetch with relations to avoid lazy load errors in response validation
-        stmt = select(Appointment).options(
-            joinedload(Appointment.client), 
-            joinedload(Appointment.service)
-        ).where(Appointment.id == new_appt.id)
-        result = await db.execute(stmt)
-        final_appt = result.scalar_one()
+        final_appt = new_appt
+        try:
+            stmt = select(Appointment).options(
+                joinedload(Appointment.client),
+                joinedload(Appointment.service)
+            ).where(Appointment.id == new_appt.id)
+            result = await db.execute(stmt)
+            refreshed_appt = result.scalar_one_or_none()
+            if refreshed_appt is not None:
+                final_appt = refreshed_appt
+            else:
+                logger.warning(
+                    "Appointment create reread failed after commit, returning in-memory appointment id=%s tenant_id=%s",
+                    new_appt.id,
+                    tenant_id,
+                )
+                final_appt.client = client
+                final_appt.service = service
+        except Exception as reread_error:
+            logger.error(
+                "Appointment create reread errored after commit appointment_id=%s tenant_id=%s: %s",
+                new_appt.id,
+                tenant_id,
+                reread_error,
+            )
+            final_appt.client = client
+            final_appt.service = service
         
         from app.models.models import AppointmentHistory
 
-        db.add(AppointmentHistory(
-            appointment_id=final_appt.id,
-            tenant_id=tenant_id,
-            old_status="",
-            new_status=AppointmentStatus.NEW.value,
-            changed_by_user_id=current_user.id,
-            source="dashboard",
-        ))
-        await log_audit(
-            db,
-            tenant_id=tenant_id,
-            actor_user_id=current_user.id,
-            action="create",
-            entity_type="appointment",
-            entity_id=str(final_appt.id),
-            payload_after={"id": final_appt.id, "status": "new", "start_time": final_appt.start_time.isoformat()},
-            source="dashboard",
-        )
-        if client_created:
+        try:
+            db.add(AppointmentHistory(
+                appointment_id=final_appt.id,
+                tenant_id=tenant_id,
+                old_status="",
+                new_status=AppointmentStatus.NEW.value,
+                changed_by_user_id=current_user.id,
+                source="dashboard",
+            ))
             await log_audit(
                 db,
                 tenant_id=tenant_id,
                 actor_user_id=current_user.id,
                 action="create",
-                entity_type="client",
-                entity_id=str(client.id),
-                payload_after={"id": client.id, "full_name": client.full_name, "phone": client.phone},
+                entity_type="appointment",
+                entity_id=str(final_appt.id),
+                payload_after={"id": final_appt.id, "status": "new", "start_time": final_appt.start_time.isoformat()},
                 source="dashboard",
             )
-        await db.commit()
+            if client_created:
+                await log_audit(
+                    db,
+                    tenant_id=tenant_id,
+                    actor_user_id=current_user.id,
+                    action="create",
+                    entity_type="client",
+                    entity_id=str(client.id),
+                    payload_after={"id": client.id, "full_name": client.full_name, "phone": client.phone},
+                    source="dashboard",
+                )
+            await enqueue_appointment_created_event(
+                db,
+                tenant_id=tenant_id,
+                appointment_id=final_appt.id,
+            )
+            await db.commit()
+        except Exception as history_audit_error:
+            await db.rollback()
+            logger.error(
+                "Appointment create history/audit commit failed after create appointment_id=%s tenant_id=%s: %s",
+                final_appt.id,
+                tenant_id,
+                history_audit_error,
+            )
 
         APPOINTMENTS_CREATED_TOTAL.labels(
             tenant_id=str(tenant_id), source="dashboard"
@@ -346,18 +422,6 @@ async def create_appointment(
             )
         except Exception:
             pass
-
-        try:
-            external_integration.enqueue_appointment(final_appt.id, tenant_id)
-        except Exception as integration_error:
-            APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL.labels(
-                tenant_id=str(tenant_id)
-            ).inc()
-            logger.error(
-                "External integration enqueue failed for appointment %s: %s",
-                final_appt.id,
-                integration_error,
-            )
 
         return final_appt
         
@@ -426,7 +490,45 @@ async def update_appointment_status(
     ))
 
     await db.commit()
-    await db.refresh(appt)
+
+    try:
+        refreshed_stmt = select(Appointment).options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+        ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
+        refreshed_result = await db.execute(refreshed_stmt)
+        refreshed_appt = refreshed_result.scalar_one_or_none()
+        if refreshed_appt is not None:
+            appt = refreshed_appt
+        else:
+            logger.warning(
+                "Appointment status update reread failed after commit, returning in-memory appointment id=%s tenant_id=%s",
+                appointment_id,
+                tenant_id,
+            )
+    except Exception as reread_error:
+        logger.error(
+            "Appointment status update reread errored after commit appointment_id=%s tenant_id=%s: %s",
+            appointment_id,
+            tenant_id,
+            reread_error,
+        )
+
+    try:
+        integration_appt = await run_appointment_integration_sync(
+            db=db,
+            appointment_id=appt.id,
+            tenant_id=tenant_id,
+        )
+        if integration_appt is not None:
+            appt = integration_appt
+    except Exception as integration_error:
+        logger.error(
+            "Appointment status update integration sync failed after commit appointment_id=%s tenant_id=%s: %s",
+            appt.id,
+            tenant_id,
+            integration_error,
+        )
 
     from app.services.notification_service import NotificationService, STATUS_TO_NOTIFICATION_EVENT
 
@@ -462,14 +564,22 @@ async def update_appointment_status(
 
         asyncio.create_task(notify_via_dispatch())
 
-    redis = RedisService.get_redis()
-    payload = {
-        "type": "appointment_status_updated",
-        "appointment_id": appt.id,
-        "old_status": old_status.value,
-        "new_status": target.value,
-    }
-    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(payload))
+    try:
+        redis = RedisService.get_redis()
+        payload = {
+            "type": "appointment_status_updated",
+            "appointment_id": appt.id,
+            "old_status": old_status.value,
+            "new_status": target.value,
+        }
+        await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(payload))
+    except Exception as redis_error:
+        logger.error(
+            "Appointment status update redis publish failed appointment_id=%s tenant_id=%s: %s",
+            appt.id,
+            tenant_id,
+            redis_error,
+        )
 
     APPOINTMENT_STATUS_TRANSITIONS_TOTAL.labels(
         tenant_id=str(tenant_id),
@@ -816,14 +926,36 @@ async def put_appointment(
         joinedload(Appointment.service),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
     result = await db.execute(stmt)
-    appt = result.scalar_one()
+    refreshed_appt = result.scalar_one_or_none()
+    if refreshed_appt is not None:
+        appt = refreshed_appt
+    else:
+        logger.warning(
+            "Appointment update reread failed after commit, returning in-memory appointment id=%s tenant_id=%s",
+            appointment_id,
+            tenant_id,
+        )
 
-    redis = RedisService.get_redis()
-    message = {
-        "type": "APPOINTMENT_UPDATED",
-        "data": {"id": appt.id, "shop_id": appt.shop_id},
-    }
-    await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+    appt = await run_appointment_integration_sync(
+        db=db,
+        appointment_id=appt.id,
+        tenant_id=tenant_id,
+    )
+
+    try:
+        redis = RedisService.get_redis()
+        message = {
+            "type": "APPOINTMENT_UPDATED",
+            "data": {"id": appt.id, "shop_id": appt.shop_id},
+        }
+        await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(message))
+    except Exception as redis_error:
+        logger.error(
+            "Appointment update redis publish failed appointment_id=%s tenant_id=%s: %s",
+            appt.id,
+            tenant_id,
+            redis_error,
+        )
 
     return appt
 
@@ -868,7 +1000,9 @@ async def delete_appointment(
 
 
 @router.post("/public", response_model=AppointmentRead)
+@limiter.limit(PUBLIC_BOOKING_RATE_LIMIT)
 async def create_public_appointment(
+    request: Request,
     payload: PublicBookingCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: int = Depends(deps.get_current_tenant_id)

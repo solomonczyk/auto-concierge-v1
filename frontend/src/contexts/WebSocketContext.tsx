@@ -14,11 +14,6 @@ interface WebSocketProviderProps {
     children: ReactNode
 }
 
-async function fetchWsTicket(): Promise<string> {
-    const response = await api.post('/ws-ticket')
-    return response.data.ticket
-}
-
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ url, children }) => {
     const [isConnected, setIsConnected] = useState(false)
     const [lastMessage, setLastMessage] = useState<any | null>(null)
@@ -49,25 +44,15 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ url, child
             reconnectTimer.current = setTimeout(() => { connect() }, delay)
         }
 
-        const connect = async () => {
-            let ticket: string
-            try {
-                ticket = await fetchWsTicket()
-            } catch (err) {
-                console.warn('WS ticket fetch failed, scheduling reconnect', err)
-                scheduleReconnect()
-                return
-            }
-
-            const separator = url.includes('?') ? '&' : '?'
-            const wsUrl = url + separator + `ticket=${encodeURIComponent(ticket)}`
-            const socket = new WebSocket(wsUrl)
+        const connect = () => {
+            // Cookie-based auth: same-origin WS sends HttpOnly cookie automatically
+            const socket = new WebSocket(url)
             ws.current = socket
 
             socket.onopen = () => {
                 setIsConnected(true)
                 reconnectAttempts.current = 0
-                console.log('WebSocket connected (ticket auth)')
+                console.log('WebSocket connected (cookie auth)')
 
                 clearHeartbeat()
                 heartbeatTimer.current = setInterval(() => {

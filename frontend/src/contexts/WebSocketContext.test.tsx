@@ -25,18 +25,6 @@ class MockWebSocket {
 
 global.WebSocket = MockWebSocket as any
 
-vi.mock('@/lib/api', () => {
-    let callCount = 0
-    return {
-        api: {
-            post: vi.fn(async () => {
-                callCount += 1
-                return { data: { ticket: `mock-ticket-${callCount}`, expires_in: 45, token_type: 'ws_ticket' } }
-            }),
-        },
-    }
-})
-
 const TestComponent = () => {
     const { isConnected, lastMessage } = useWebSocket()
     return (
@@ -47,7 +35,7 @@ const TestComponent = () => {
     )
 }
 
-describe('WebSocketProvider (ticket auth)', () => {
+describe('WebSocketProvider (cookie auth)', () => {
     beforeEach(() => {
         mockInstances = []
         vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -56,9 +44,7 @@ describe('WebSocketProvider (ticket auth)', () => {
         vi.useRealTimers()
     })
 
-    it('fetches ws-ticket then connects with ?ticket=', async () => {
-        const { api } = await import('@/lib/api')
-
+    it('connects with cookie auth (no ticket/token in URL)', async () => {
         await act(async () => {
             render(
                 <WebSocketProvider url="ws://localhost:8000/ws">
@@ -67,7 +53,6 @@ describe('WebSocketProvider (ticket auth)', () => {
             )
         })
 
-        expect(api.post).toHaveBeenCalledWith('/ws-ticket')
         expect(screen.getByTestId('status')).toHaveTextContent('Disconnected')
 
         await act(async () => {
@@ -76,13 +61,12 @@ describe('WebSocketProvider (ticket auth)', () => {
 
         expect(screen.getByTestId('status')).toHaveTextContent('Connected')
         expect(mockInstances.length).toBe(1)
-        expect(mockInstances[0].url).toContain('?ticket=mock-ticket-')
+        expect(mockInstances[0].url).not.toContain('?ticket=')
         expect(mockInstances[0].url).not.toContain('token=')
+        expect(mockInstances[0].url).toBe('ws://localhost:8000/ws')
     })
 
-    it('on disconnect fetches a fresh ticket for reconnect', async () => {
-        const { api } = await import('@/lib/api')
-
+    it('on disconnect schedules reconnect with same URL (cookie auth)', async () => {
         await act(async () => {
             render(
                 <WebSocketProvider url="ws://localhost:8000/ws">
@@ -97,7 +81,6 @@ describe('WebSocketProvider (ticket auth)', () => {
         expect(screen.getByTestId('status')).toHaveTextContent('Connected')
 
         const firstUrl = mockInstances[0].url
-        const callsBefore = (api.post as any).mock.calls.length
 
         await act(async () => {
             mockInstances[0].onclose({ code: 4401 })
@@ -108,9 +91,9 @@ describe('WebSocketProvider (ticket auth)', () => {
             await vi.advanceTimersByTimeAsync(1500)
         })
 
-        expect((api.post as any).mock.calls.length).toBeGreaterThan(callsBefore)
         expect(mockInstances.length).toBe(2)
-        expect(mockInstances[1].url).toContain('?ticket=mock-ticket-')
-        expect(mockInstances[1].url).not.toBe(firstUrl)
+        expect(mockInstances[1].url).toBe(firstUrl)
+        expect(mockInstances[1].url).not.toContain('?ticket=')
+        expect(mockInstances[1].url).not.toContain('token=')
     })
 })

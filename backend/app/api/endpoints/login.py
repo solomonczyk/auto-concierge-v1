@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.rate_limit import limiter
+from app.core.rate_limit import LOGIN_RATE_LIMIT, limiter
 from app.api import deps
 from app.core import security
 from app.core.config import settings
@@ -75,7 +75,7 @@ async def get_me(
 
 
 @router.post("/login/access-token")
-@limiter.limit("10/minute")
+@limiter.limit(LOGIN_RATE_LIMIT)
 async def login_access_token(
     request: Request,
     db: AsyncSession = Depends(get_db),

@@ -46,9 +46,12 @@ async def read_clients(
     current_user: User = Depends(deps.require_role([UserRole.ADMIN, UserRole.MANAGER, UserRole.STAFF]))
 ) -> Any:
     """
-    Retrieve clients scoped by tenant.
+    Retrieve clients scoped by tenant. Excludes soft-deleted.
     """
-    stmt = select(Client).where(Client.tenant_id == tenant_id).offset(skip).limit(limit)
+    _client_not_deleted = Client.deleted_at.is_(None)
+    stmt = select(Client).where(
+        and_(Client.tenant_id == tenant_id, _client_not_deleted)
+    ).offset(skip).limit(limit)
     result = await db.execute(stmt)
     clients = result.scalars().all()
     

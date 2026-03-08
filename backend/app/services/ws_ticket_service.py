@@ -62,6 +62,7 @@ def validate_ws_ticket(*, ticket: str) -> WSTicketClaims:
         raise WSTicketValidationError("Invalid ws ticket type")
 
     return WSTicketClaims(
+        auth_type="ws_ticket",
         user_id=raw_claims["user_id"],
         tenant_id=raw_claims["tenant_id"],
         role=raw_claims["role"],

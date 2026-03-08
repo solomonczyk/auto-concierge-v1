@@ -18,23 +18,50 @@
 
 ## Data sources
 
-| Блок | Источник данных |
-|------|-----------------|
-| **Today appointments** | `GET /api/v1/appointments/?date=YYYY-MM-DD` (или фильтр на клиенте из общего списка) |
+| Block | Source |
+|-------|--------|
+| **Today appointments** | `GET /api/v1/appointments/today` |
 | **Kanban** | `GET /api/v1/appointments/kanban` + WS `appointments_updates:{tenant_id}` |
-| **Waiting list** | Часть Kanban (колонка waitlist) или тот же appointments с `status=waitlist` |
+| **Waiting list** | Часть Kanban (status=waitlist) |
 | **Cancelled / no_show** | `GET /api/v1/appointments/terminal` |
-| **SLA alerts** | Backend aggregated endpoint (например `GET /api/v1/sla/unconfirmed`) или отдельный alerts endpoint. Сейчас worker только логирует — нужен API для отображения в UI. |
+| **SLA alerts** | `GET /api/v1/sla/unconfirmed` |
+
+---
+
+## Today appointments API contract
+
+1. **Endpoint:** `GET /api/v1/appointments/today`
+
+2. **Returns:** appointments for current day only (tenant timezone)
+
+3. **Tenant isolation:** tenant_id filter
+
+4. **Sorting:** start_time ASC
+
+5. **Pagination:** skip, limit (1..100)
 
 ---
 
 ## Kanban API contract
 
-1. **Endpoint:** `GET /api/v1/appointments/kanban`
+1. **Data source:** `GET /api/v1/appointments/kanban` (+ WS `appointments_updates:{tenant_id}` для live updates)
 
-2. **Возвращает только статусы Kanban:** waitlist, new, confirmed, in_progress, completed
+2. **Response format:** объект с 5 колонками. Каждая колонка — массив `AppointmentRead`:
 
-3. **Terminal статусы не возвращаются:** cancelled, no_show
+   ```json
+   {
+     "waitlist": [],
+     "new": [],
+     "confirmed": [],
+     "in_progress": [],
+     "completed": []
+   }
+   ```
+
+3. **Правила:**
+   - **cancelled** и **no_show** не входят в response (terminal статусы)
+   - внутри каждой колонки сортировка **start_time ASC**
+   - **tenant isolation** обязателен (фильтр по tenant_id)
 
 ---
 

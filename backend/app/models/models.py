@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Enum as SQLEnum, JSON, BigInteger
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Enum as SQLEnum, JSON, BigInteger, Index
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.db.session import Base
 
@@ -20,6 +20,12 @@ class TenantStatus(str, Enum):
     SUSPENDED = "suspended"
     DELETED = "deleted"
     PENDING = "pending"
+
+
+class IntegrationStatus(str, Enum):
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
 
 class Tariff(str, Enum):
     FREE = "free"
@@ -143,6 +149,13 @@ class Appointment(Base):
     car_make: Mapped[Optional[str]] = mapped_column(String(100))   # e.g. "Toyota Camry"
     car_year: Mapped[Optional[int]] = mapped_column(Integer)       # e.g. 2019
     vin: Mapped[Optional[str]] = mapped_column(String(17))         # 17-char VIN
+    integration_status: Mapped[IntegrationStatus] = mapped_column(
+        SQLEnum(IntegrationStatus),
+        default=IntegrationStatus.SUCCESS,
+        nullable=False,
+    )
+    last_integration_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_integration_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -199,3 +212,31 @@ class AuditLog(Base):
     payload_after: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     source: Mapped[str] = mapped_column(String(30), nullable=False, default="api")  # api, dashboard, bot, system
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        Index("ix_outbox_events_status_available_at", "status", "available_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
