@@ -15,10 +15,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from sqlalchemy import select, and_
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.session import async_session_local
 from app.models.models import Client, Appointment, Service, AppointmentStatus, Shop
+from app.models.auto_extensions import AppointmentAutoSnapshot
 from app.bot.keyboards import (
     get_main_keyboard,
     get_appointment_keyboard,
@@ -51,6 +52,34 @@ from app.services.demo_workflow import run_demo_workflow
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _upsert_appointment_auto_snapshot(
+    db,
+    appt: Appointment,
+    car_make: Optional[str],
+    car_year: Optional[int],
+    vin: Optional[str],
+) -> None:
+    """Create or update AppointmentAutoSnapshot. Skips if all fields are None."""
+    if car_make is None and car_year is None and vin is None:
+        return
+    sn = getattr(appt, "auto_snapshot", None)
+    if sn is None:
+        sn = AppointmentAutoSnapshot(
+            appointment_id=appt.id,
+            car_make=car_make,
+            car_year=car_year,
+            vin=vin,
+        )
+        db.add(sn)
+    else:
+        if car_make is not None:
+            sn.car_make = car_make
+        if car_year is not None:
+            sn.car_year = car_year
+        if vin is not None:
+            sn.vin = vin
 
 
 # ──────────────────────────────────────────────
@@ -479,7 +508,9 @@ async def web_app_data_handler(message: Message) -> None:
             # Check for existing appointment if rescheduling
             existing_appt = None
             if appointment_id:
-                stmt = select(Appointment).where(
+                stmt = select(Appointment).options(
+                    selectinload(Appointment.auto_snapshot),
+                ).where(
                     and_(Appointment.id == int(appointment_id), Appointment.tenant_id == tenant.id)
                 )
                 result = await db.execute(stmt)
@@ -543,9 +574,7 @@ async def web_app_data_handler(message: Message) -> None:
                 existing_appt.start_time = start_time_utc
                 existing_appt.end_time = end_time_utc
                 existing_appt.status = status
-                existing_appt.car_make = car_make
-                existing_appt.car_year = car_year
-                existing_appt.vin = vin
+                _upsert_appointment_auto_snapshot(db, existing_appt, car_make, car_year, vin)
                 appt = existing_appt
             else:
                 # Create new appointment
@@ -557,11 +586,10 @@ async def web_app_data_handler(message: Message) -> None:
                     start_time=start_time_utc,
                     end_time=end_time_utc,
                     status=status,
-                    car_make=car_make,
-                    car_year=car_year,
-                    vin=vin,
                 )
                 db.add(new_appt)
+                await db.flush()
+                _upsert_appointment_auto_snapshot(db, new_appt, car_make, car_year, vin)
                 appt = new_appt
 
             await db.commit()

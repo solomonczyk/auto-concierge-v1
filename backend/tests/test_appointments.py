@@ -829,9 +829,10 @@ async def test_put_appointment_updates_allowed_fields(client: AsyncClient):
     )
     assert put_res.status_code == 200
     data = put_res.json()
-    assert data["car_make"] == "Honda"
-    assert data["car_year"] == 2020
-    assert data["vin"] == "1HGBH41JXMN109186"
+    assert data["auto_info"] is not None
+    assert data["auto_info"]["car_make"] == "Honda"
+    assert data["auto_info"]["car_year"] == 2020
+    assert data["auto_info"]["vin"] == "1HGBH41JXMN109186"
 
 
 @pytest.mark.asyncio

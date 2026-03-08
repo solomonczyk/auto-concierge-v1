@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.endpoints import appointments as appointments_endpoint
 from app.core.config import settings
@@ -172,14 +173,20 @@ async def test_put_appointment_marks_integration_failed_without_breaking_flow(
 
     assert put_response.status_code == 200
     payload = put_response.json()
-    assert payload["car_make"] == "Toyota"
+    assert payload["auto_info"] is not None
+    assert payload["auto_info"]["car_make"] == "Toyota"
     assert payload["integration_status"] == "failed"
     assert payload["last_integration_error"] == "crm put timeout"
     assert payload["last_integration_attempt_at"] is not None
 
-    result = await db_session.execute(select(Appointment).where(Appointment.id == appointment_id))
+    result = await db_session.execute(
+        select(Appointment)
+        .options(selectinload(Appointment.auto_snapshot))
+        .where(Appointment.id == appointment_id)
+    )
     appointment = result.scalar_one()
-    assert appointment.car_make == "Toyota"
+    assert appointment.auto_snapshot is not None
+    assert appointment.auto_snapshot.car_make == "Toyota"
     assert appointment.integration_status == IntegrationStatus.FAILED
 
     audit_result = await db_session.execute(
@@ -277,7 +284,8 @@ async def test_put_appointment_clears_previous_integration_error_after_success(
 
     assert put_response.status_code == 200
     payload = put_response.json()
-    assert payload["car_year"] == 2021
+    assert payload["auto_info"] is not None
+    assert payload["auto_info"]["car_year"] == 2021
     assert payload["integration_status"] == "success"
     assert payload["last_integration_error"] is None
     assert payload["last_integration_attempt_at"] is not None

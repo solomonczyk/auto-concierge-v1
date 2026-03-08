@@ -6,10 +6,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, delete
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from app.db.session import get_db
 from app.api import deps
 from app.models.models import Appointment, AppointmentHistory, AppointmentStatus, Client, IntegrationStatus, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
+from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from app.services.redis_service import RedisService 
 from app.services.external_integration_service import external_integration
 from app.core.config import settings
@@ -35,6 +36,48 @@ logger = logging.getLogger(__name__)
 _NOT_DELETED = Appointment.deleted_at.is_(None)
 _CLIENT_NOT_DELETED = Client.deleted_at.is_(None)
 router = APIRouter()
+
+
+def _enrich_appointment_auto_fields(appt: Appointment) -> None:
+    """Set auto_info on appt from auto_snapshot for AppointmentRead serialization."""
+    sn = getattr(appt, "auto_snapshot", None)
+    setattr(
+        appt,
+        "auto_info",
+        AppointmentAutoInfo(
+            car_make=sn.car_make if sn else None,
+            car_year=sn.car_year if sn else None,
+            vin=sn.vin if sn else None,
+        ),
+    )
+
+
+def _upsert_appointment_auto_snapshot(
+    db: AsyncSession,
+    appt: Appointment,
+    car_make: Optional[str],
+    car_year: Optional[int],
+    vin: Optional[str],
+) -> None:
+    """Create or update AppointmentAutoSnapshot. Skips if all fields are None."""
+    if car_make is None and car_year is None and vin is None:
+        return
+    sn = getattr(appt, "auto_snapshot", None)
+    if sn is None:
+        sn = AppointmentAutoSnapshot(
+            appointment_id=appt.id,
+            car_make=car_make,
+            car_year=car_year,
+            vin=vin,
+        )
+        db.add(sn)
+    else:
+        if car_make is not None:
+            sn.car_make = car_make
+        if car_year is not None:
+            sn.car_year = car_year
+        if vin is not None:
+            sn.vin = vin
 
 class PublicBookingCreate(BaseModel):
     service_id: int
@@ -74,6 +117,13 @@ class ServiceShort(BaseModel):
     class Config:
         from_attributes = True
 
+
+class AppointmentAutoInfo(BaseModel):
+    car_make: Optional[str] = None
+    car_year: Optional[int] = None
+    vin: Optional[str] = None
+
+
 class AppointmentRead(BaseModel):
     id: int
     shop_id: int
@@ -87,6 +137,7 @@ class AppointmentRead(BaseModel):
     car_make: Optional[str] = None
     car_year: Optional[int] = None
     vin: Optional[str] = None
+    auto_info: Optional[AppointmentAutoInfo] = None
     integration_status: Optional[str] = None
     last_integration_error: Optional[str] = None
     last_integration_attempt_at: Optional[datetime] = None
@@ -135,7 +186,9 @@ async def update_appointment(
     tenant_id: int = Depends(deps.get_current_tenant_id),
     current_user: User = Depends(deps.get_current_active_user),
 ):
-    stmt = select(Appointment).where(
+    stmt = select(Appointment).options(
+        selectinload(Appointment.auto_snapshot)
+    ).where(
         and_(Appointment.id == id, Appointment.tenant_id == tenant_id, _NOT_DELETED)
     )
     result = await db.execute(stmt)
@@ -159,12 +212,12 @@ async def update_appointment(
         service = await db.get(Service, appt.service_id)
         appt.end_time = appt.start_time + timedelta(minutes=service.duration_minutes)
 
-    if appt_update.car_make is not None:
-        appt.car_make = appt_update.car_make
-    if appt_update.car_year is not None:
-        appt.car_year = appt_update.car_year
-    if appt_update.vin is not None:
-        appt.vin = appt_update.vin
+    _upsert_appointment_auto_snapshot(
+        db, appt,
+        appt_update.car_make,
+        appt_update.car_year,
+        appt_update.vin,
+    )
 
     await db.commit()
     
@@ -172,7 +225,8 @@ async def update_appointment(
     try:
         stmt = select(Appointment).options(
             joinedload(Appointment.client),
-            joinedload(Appointment.service)
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
         ).where(Appointment.id == id)
         result = await db.execute(stmt)
         refreshed_appt = result.scalar_one_or_none()
@@ -231,7 +285,7 @@ async def update_appointment(
             tenant_id,
             redis_error,
         )
-    
+    _enrich_appointment_auto_fields(appt)
     return appt
 
 @router.post("/", response_model=AppointmentRead)
@@ -332,7 +386,8 @@ async def create_appointment(
         try:
             stmt = select(Appointment).options(
                 joinedload(Appointment.client),
-                joinedload(Appointment.service)
+                joinedload(Appointment.service),
+                selectinload(Appointment.auto_snapshot),
             ).where(Appointment.id == new_appt.id)
             result = await db.execute(stmt)
             refreshed_appt = result.scalar_one_or_none()
@@ -423,6 +478,7 @@ async def create_appointment(
         except Exception:
             pass
 
+        _enrich_appointment_auto_fields(final_appt)
         return final_appt
         
     finally:
@@ -446,6 +502,7 @@ async def update_appointment_status(
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
+        selectinload(Appointment.auto_snapshot),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
 
     result = await db.execute(stmt)
@@ -495,6 +552,7 @@ async def update_appointment_status(
         refreshed_stmt = select(Appointment).options(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
         ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
         refreshed_result = await db.execute(refreshed_stmt)
         refreshed_appt = refreshed_result.scalar_one_or_none()
@@ -587,6 +645,7 @@ async def update_appointment_status(
         new_status=target.value,
     ).inc()
 
+    _enrich_appointment_auto_fields(appt)
     return appt
 
 def _should_show_completed_in_kanban(
@@ -637,13 +696,19 @@ async def read_appointments(
     fetch_limit = limit * 3 if for_kanban else limit
     stmt = (
         select(Appointment)
-        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
         .where(and_(Appointment.tenant_id == tenant_id, _NOT_DELETED))
         .offset(skip)
         .limit(fetch_limit)
     )
     result = await db.execute(stmt)
     appointments = list(result.scalars().all())
+    for a in appointments:
+        _enrich_appointment_auto_fields(a)
 
     if for_kanban:
         ts_stmt = select(TenantSettings).where(TenantSettings.tenant_id == tenant_id)
@@ -693,7 +758,11 @@ async def read_appointments_today(
 
     stmt = (
         select(Appointment)
-        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
         .where(
             and_(
                 Appointment.tenant_id == tenant_id,
@@ -707,7 +776,10 @@ async def read_appointments_today(
         .limit(limit)
     )
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    appointments = list(result.scalars().all())
+    for a in appointments:
+        _enrich_appointment_auto_fields(a)
+    return appointments
 
 
 @router.get("/terminal", response_model=List[AppointmentRead])
@@ -723,7 +795,11 @@ async def read_appointments_terminal(
     """
     stmt = (
         select(Appointment)
-        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
         .where(
             and_(
                 Appointment.tenant_id == tenant_id,
@@ -741,7 +817,10 @@ async def read_appointments_terminal(
         .limit(limit)
     )
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    appointments = list(result.scalars().all())
+    for a in appointments:
+        _enrich_appointment_auto_fields(a)
+    return appointments
 
 
 @router.get("/kanban", response_model=KanbanBoardResponse)
@@ -757,7 +836,11 @@ async def read_appointments_kanban(
     """
     stmt = (
         select(Appointment)
-        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
         .where(
             and_(
                 Appointment.tenant_id == tenant_id,
@@ -769,6 +852,8 @@ async def read_appointments_kanban(
     )
     result = await db.execute(stmt)
     appointments = list(result.scalars().all())
+    for a in appointments:
+        _enrich_appointment_auto_fields(a)
 
     groups: Dict[str, List] = {
         "waitlist": [],
@@ -841,7 +926,11 @@ async def read_appointment(
     """
     stmt = (
         select(Appointment)
-        .options(joinedload(Appointment.client), joinedload(Appointment.service))
+        .options(
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
         .where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
     )
     result = await db.execute(stmt)
@@ -849,6 +938,7 @@ async def read_appointment(
     
     if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
+    _enrich_appointment_auto_fields(appt)
     return appt
 
 
@@ -864,7 +954,9 @@ async def put_appointment(
     Updates only allowed fields: service_id, start_time, car_make, car_year, vin.
     Returns 404 if not found or belongs to another tenant.
     """
-    stmt = select(Appointment).where(
+    stmt = select(Appointment).options(
+        selectinload(Appointment.auto_snapshot),
+    ).where(
         and_(
             Appointment.id == appointment_id,
             Appointment.tenant_id == tenant_id,
@@ -912,18 +1004,19 @@ async def put_appointment(
         appt.start_time = appt_update.start_time
         appt.end_time = appt.start_time + timedelta(minutes=service.duration_minutes)
 
-    if appt_update.car_make is not None:
-        appt.car_make = appt_update.car_make
-    if appt_update.car_year is not None:
-        appt.car_year = appt_update.car_year
-    if appt_update.vin is not None:
-        appt.vin = appt_update.vin
+    _upsert_appointment_auto_snapshot(
+        db, appt,
+        appt_update.car_make,
+        appt_update.car_year,
+        appt_update.vin,
+    )
 
     await db.commit()
 
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
+        selectinload(Appointment.auto_snapshot),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
     result = await db.execute(stmt)
     refreshed_appt = result.scalar_one_or_none()
@@ -936,11 +1029,18 @@ async def put_appointment(
             tenant_id,
         )
 
-    appt = await run_appointment_integration_sync(
+    integration_appt = await run_appointment_integration_sync(
         db=db,
         appointment_id=appt.id,
         tenant_id=tenant_id,
     )
+    stmt = select(Appointment).options(
+        joinedload(Appointment.client),
+        joinedload(Appointment.service),
+        selectinload(Appointment.auto_snapshot),
+    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none() or integration_appt
 
     try:
         redis = RedisService.get_redis()
@@ -956,7 +1056,7 @@ async def put_appointment(
             tenant_id,
             redis_error,
         )
-
+    _enrich_appointment_auto_fields(appt)
     return appt
 
 
@@ -1040,7 +1140,9 @@ async def create_public_appointment(
         # 4. Handle Rescheduling
         existing_appt = None
         if payload.appointment_id:
-            stmt = select(Appointment).where(
+            stmt = select(Appointment).options(
+                selectinload(Appointment.auto_snapshot),
+            ).where(
                 and_(Appointment.id == payload.appointment_id, Appointment.tenant_id == tenant_id)
             )
             result = await db.execute(stmt)
@@ -1065,8 +1167,10 @@ async def create_public_appointment(
                 raise HTTPException(status_code=400, detail="Выбранное время уже занято")
 
         # 6. Get/Create Client
-        stmt = select(Client).where(
-            and_(Client.telegram_id == payload.telegram_id, Client.tenant_id == tenant_id)
+        stmt = (
+            select(Client)
+            .where(and_(Client.telegram_id == payload.telegram_id, Client.tenant_id == tenant_id))
+            .options(selectinload(Client.auto_profile))
         )
         result = await db.execute(stmt)
         client = result.scalar_one_or_none()
@@ -1077,21 +1181,34 @@ async def create_public_appointment(
                 telegram_id=payload.telegram_id,
                 full_name=payload.full_name,
                 phone="unknown",
-                car_make=payload.car_make,
-                car_year=payload.car_year,
-                vin=payload.vin
             )
             db.add(client)
             await db.flush()
+            if payload.car_make or payload.car_year or payload.vin:
+                profile = ClientAutoProfile(
+                    client_id=client.id,
+                    car_make=payload.car_make,
+                    car_year=payload.car_year,
+                    vin=payload.vin,
+                )
+                db.add(profile)
         else:
-            # Update existing client info with latest car if provided
-            if payload.car_make:
-                client.car_make = payload.car_make
-            if payload.car_year:
-                client.car_year = payload.car_year
-            if payload.vin:
-                client.vin = payload.vin
-            # Also update full_name if it was Guest
+            if payload.car_make or payload.car_year or payload.vin:
+                if client.auto_profile:
+                    if payload.car_make is not None:
+                        client.auto_profile.car_make = payload.car_make
+                    if payload.car_year is not None:
+                        client.auto_profile.car_year = payload.car_year
+                    if payload.vin is not None:
+                        client.auto_profile.vin = payload.vin
+                else:
+                    profile = ClientAutoProfile(
+                        client_id=client.id,
+                        car_make=payload.car_make,
+                        car_year=payload.car_year,
+                        vin=payload.vin,
+                    )
+                    db.add(profile)
             if client.full_name == "Guest" and payload.full_name:
                 client.full_name = payload.full_name
 
@@ -1141,9 +1258,12 @@ async def create_public_appointment(
             existing_appt.start_time = start_time_utc
             existing_appt.end_time = end_time_utc
             existing_appt.status = status
-            existing_appt.car_make = payload.car_make
-            existing_appt.car_year = payload.car_year
-            existing_appt.vin = payload.vin
+            _upsert_appointment_auto_snapshot(
+                db, existing_appt,
+                payload.car_make,
+                payload.car_year,
+                payload.vin,
+            )
             appt = existing_appt
         else:
             appt = Appointment(
@@ -1154,18 +1274,23 @@ async def create_public_appointment(
                 start_time=start_time_utc,
                 end_time=end_time_utc,
                 status=status,
-                car_make=payload.car_make,
-                car_year=payload.car_year,
-                vin=payload.vin
             )
             db.add(appt)
+            await db.flush()
+            _upsert_appointment_auto_snapshot(
+                db, appt,
+                payload.car_make,
+                payload.car_year,
+                payload.vin,
+            )
 
         await db.commit()
         
         # Re-fetch with relations to avoid lazy load errors in response validation
         stmt = select(Appointment).options(
-            joinedload(Appointment.client), 
-            joinedload(Appointment.service)
+            joinedload(Appointment.client),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
         ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
         result = await db.execute(stmt)
         appt = result.scalar_one()
@@ -1232,6 +1357,7 @@ async def create_public_appointment(
         except Exception as e:
             logger.error(f"Redis publish error: {e}")
 
+        _enrich_appointment_auto_fields(appt)
         return appt
 
     except HTTPException:

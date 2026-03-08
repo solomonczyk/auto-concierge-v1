@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Enum as SQLEnum, JSON, BigInteger, Index
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app.db.session import Base
@@ -109,15 +112,19 @@ class Client(Base):
     full_name: Mapped[str] = mapped_column(String(100), nullable=False)
     phone: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, index=True)
-    car_make: Mapped[Optional[str]] = mapped_column(String(100))
-    car_year: Mapped[Optional[int]] = mapped_column(Integer)
-    vin: Mapped[Optional[str]] = mapped_column(String(17))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="clients")
     appointments: Mapped[List["Appointment"]] = relationship("Appointment", back_populates="client")
+    auto_profile: Mapped[Optional["ClientAutoProfile"]] = relationship(
+        "ClientAutoProfile",
+        back_populates="client",
+        uselist=False,
+        lazy="selectin",
+    )
+
 
 class Service(Base):
     __tablename__ = "services"
@@ -145,10 +152,6 @@ class Appointment(Base):
     status: Mapped[AppointmentStatus] = mapped_column(SQLEnum(AppointmentStatus), default=AppointmentStatus.NEW, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text)
-    # Vehicle info collected at booking
-    car_make: Mapped[Optional[str]] = mapped_column(String(100))   # e.g. "Toyota Camry"
-    car_year: Mapped[Optional[int]] = mapped_column(Integer)       # e.g. 2019
-    vin: Mapped[Optional[str]] = mapped_column(String(17))         # 17-char VIN
     integration_status: Mapped[IntegrationStatus] = mapped_column(
         SQLEnum(IntegrationStatus),
         default=IntegrationStatus.SUCCESS,
@@ -165,6 +168,12 @@ class Appointment(Base):
     client: Mapped["Client"] = relationship("Client", back_populates="appointments")
     service: Mapped["Service"] = relationship("Service", back_populates="appointments")
     history: Mapped[List["AppointmentHistory"]] = relationship("AppointmentHistory", back_populates="appointment", lazy="dynamic")
+    auto_snapshot: Mapped[Optional["AppointmentAutoSnapshot"]] = relationship(
+        "AppointmentAutoSnapshot",
+        back_populates="appointment",
+        uselist=False,
+        lazy="selectin",
+    )
 
 
 class AppointmentHistory(Base):
@@ -240,3 +249,7 @@ class OutboxEvent(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+
+# Ensure ClientAutoProfile is in registry for relationship resolution
+import app.models.auto_extensions  # noqa: F401

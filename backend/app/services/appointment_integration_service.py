@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.metrics import APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL
 from app.models.models import Appointment, IntegrationStatus
@@ -40,6 +40,7 @@ async def _set_appointment_integration_state(
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
+        selectinload(Appointment.auto_snapshot),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
     result = await db.execute(stmt)
     appointment = result.scalar_one_or_none()
@@ -47,7 +48,7 @@ async def _set_appointment_integration_state(
         appointment = await db.get(
             Appointment,
             appointment_id,
-            options=(joinedload(Appointment.client), joinedload(Appointment.service)),
+            options=(joinedload(Appointment.client), joinedload(Appointment.service), selectinload(Appointment.auto_snapshot)),
         )
         if appointment and appointment.tenant_id != tenant_id:
             appointment = None
