@@ -374,6 +374,17 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
             old_status = appt.status.value
 
             appt.status = AppointmentStatus.CANCELLED
+
+            from app.models.models import AppointmentHistory
+            db.add(AppointmentHistory(
+                appointment_id=appt.id,
+                tenant_id=tenant.id,
+                old_status=old_status,
+                new_status=AppointmentStatus.CANCELLED.value,
+                changed_by_user_id=None,
+                source="bot",
+                reason="client_request",
+            ))
             await db.commit()
 
             await callback_query.message.edit_text(

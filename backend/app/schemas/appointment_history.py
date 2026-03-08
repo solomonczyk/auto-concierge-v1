@@ -11,6 +11,7 @@ class AppointmentHistoryRead(BaseModel):
     appointment_id: int
     old_status: str
     new_status: str
+    reason: Optional[str] = None
     created_at: datetime
     actor: Optional[str] = None
 

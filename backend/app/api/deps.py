@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.models import User
+from app.models.models import User, Tenant, TenantStatus
 
 AUTH_COOKIE_NAME = "access_token"
 
@@ -92,20 +92,29 @@ async def get_current_user_optional(
 
 async def get_current_tenant_id(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     current_user: Annotated[User | None, Depends(get_current_user_optional)] = None,
 ) -> int:
     from app.core.context import tenant_id_context
     ctx_tenant_id = tenant_id_context.get()
-    if ctx_tenant_id:
-        return ctx_tenant_id
+    tenant_id = ctx_tenant_id if ctx_tenant_id is not None else (current_user.tenant_id if current_user else None)
 
-    if current_user:
-        return current_user.tenant_id
+    if tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated and no tenant context",
+        )
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Not authenticated and no tenant context",
-    )
+    stmt = select(Tenant).where(Tenant.id == tenant_id)
+    result = await db.execute(stmt)
+    tenant = result.scalar_one_or_none()
+    if tenant and tenant.status == TenantStatus.SUSPENDED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tenant account is suspended",
+        )
+
+    return tenant_id
 
 
 from app.models.models import UserRole

@@ -84,6 +84,7 @@ async def auto_no_show(db: AsyncSession) -> int:
             new_status=AppointmentStatus.NO_SHOW.value,
             changed_by_user_id=None,
             source="system_sla",
+            reason="system_timeout",
         ))
         transitioned += 1
 

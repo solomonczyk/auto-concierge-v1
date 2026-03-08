@@ -17,7 +17,7 @@ from app.core.csrf import (
     CSRF_COOKIE_NAME,
 )
 from app.db.session import get_db
-from app.models.models import User, Tenant
+from app.models.models import User, Tenant, TenantStatus
 from app.services.audit_service import log_audit
 
 router = APIRouter()
@@ -101,6 +101,21 @@ async def login_access_token(
             extra={"request_id": rid, "user_id": user.id, "event_type": "auth_reject"},
         )
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    if user.tenant_id:
+        tenant_row = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_row.scalar_one_or_none()
+        if tenant and tenant.status == TenantStatus.SUSPENDED:
+            logger.warning(
+                "auth.login_suspended_tenant user_id=%s tenant_id=%s",
+                user.id,
+                user.tenant_id,
+                extra={"request_id": rid, "event_type": "auth_reject"},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Tenant account is suspended",
+            )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     token = security.create_access_token(

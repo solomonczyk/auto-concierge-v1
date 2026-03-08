@@ -51,3 +51,51 @@
 3. Исправить миграцию, протестировать локально
 4. Применить заново: `alembic upgrade head`
 5. Если данные повреждены — restore из backup
+
+---
+
+## Recovery Test (Backup Restore Verification)
+
+**Назначение:** Один раз проверить, что restore из backup реально работает.
+
+### Сценарий
+
+1. Взять свежий backup
+2. Поднять отдельную БД (или пересоздать тестовую)
+3. Выполнить restore
+4. Запустить backend
+5. Проверить: login, чтение appointments, чтение clients
+
+### Команды restore
+
+```bash
+# 1. Restore в тестовую БД autoservice_restore_test
+docker exec -i autoservice_db_prod psql -U postgres -c "CREATE DATABASE autoservice_restore_test;"
+docker cp backups/baseline_2026_03_07.dump autoservice_db_prod:/tmp/
+docker exec -i autoservice_db_prod pg_restore -U postgres -d autoservice_restore_test --no-owner --no-acl /tmp/baseline_2026_03_07.dump
+
+# 2. ОБЯЗАТЕЛЬНО: Миграции (backup старее кода)
+$env:BACKEND_CORS_ORIGINS='["http://localhost:5173"]'  # PowerShell
+docker compose -f docker-compose.prod.yml run --rm -e POSTGRES_DB=autoservice_restore_test -e ENVIRONMENT=development api alembic upgrade head
+
+# 4. Запуск API на restore_test (порт 8003)
+docker compose -f docker-compose.prod.yml run --rm -d -p 8003:8000 -e POSTGRES_DB=autoservice_restore_test -e ENVIRONMENT=development api
+
+# 5. Проверка: POST login, GET appointments, GET clients
+```
+
+**Важно:** Backup из прошлых версий не содержит колонок новых миграций. Без `alembic upgrade head` API упадёт с `column X does not exist`.
+
+### Результат теста (выполнен 2026-03-08)
+
+| Поле | Значение |
+|------|----------|
+| **Дата теста** | 2026-03-08 |
+| **Backup файл** | `backups/baseline_2026_03_07.dump` |
+| **Куда восстанавливали** | `autoservice_restore_test` |
+| **Backend поднялся** | да |
+| **Login** | OK (200) |
+| **GET /appointments** | OK (200, []) |
+| **GET /clients** | OK (200, []) |
+
+**Поправки:** baseline имел схему f9a0b1c2d3e4 → выполнен `alembic upgrade head`, вручную добавлены миграции d1e2f3a4b5c6, e2f3a4b5c6d7 и недостающие колонки clients. Для login создан тестовый user (backup пустой).

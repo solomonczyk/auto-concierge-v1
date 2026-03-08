@@ -104,6 +104,7 @@ from pydantic import BaseModel, field_validator
 
 class AppointmentStatusUpdate(BaseModel):
     status: AppointmentStatus
+    reason: Optional[str] = None
 
     @field_validator("status", mode="before")
     @classmethod
@@ -410,6 +411,10 @@ async def update_appointment_status(
     elif old_status == AppointmentStatus.COMPLETED:
         appt.completed_at = None
 
+    reason = None
+    if target in (AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW) and status_update.reason:
+        reason = status_update.reason
+
     db.add(AppointmentHistory(
         appointment_id=appt.id,
         tenant_id=tenant_id,
@@ -417,6 +422,7 @@ async def update_appointment_status(
         new_status=target.value,
         changed_by_user_id=current_user.id,
         source="api",
+        reason=reason,
     ))
 
     await db.commit()

@@ -1502,3 +1502,23 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - **Client delete flow:** `DELETE /clients/{id}` не существует. Клиенты через API не удаляются. Колонки deleted_at/deleted_by — для будущего. Защита: все выборки фильтруют `deleted_at.is_(None)`.
 - **Audit:** client create/update — `public.py`; appointment create/update/delete — `appointments.py`; appointment update в public — `public.py`; login success — `login.py`. Единый helper: `log_audit()` в `audit_service.py`, вызовы вручную в endpoints.
 - **entity_id:** `String(100)` — осознанно для универсальности (разные типы ID).
+
+## 2026-03-07 — Этап 2 (P1): status_change_reason, tenant lifecycle, recovery runbook
+
+- **status_change_reason:**
+  - Миграция `d1e2f3a4b5c6`: добавлено поле `reason` (String 50, nullable) в `appointment_history`.
+  - Модель `AppointmentHistory`, схема `AppointmentHistoryRead` — поле `reason`.
+  - `AppointmentStatusUpdate`: опциональное поле `reason` для transitions в cancelled/no_show.
+  - Использование: PATCH status (appointments.py) — передаёт reason при cancelled/no_show; SLA `auto_no_show` — `reason="system_timeout"`; бот (cancel по клику) — `reason="client_request"`.
+  - Примеры значений: client_request, operator_cancelled, no_show, system_timeout.
+- **Tenant lifecycle:**
+  - Миграция `e2f3a4b5c6d7`: добавлены значения `trial`, `deleted` в enum `tenantstatus`.
+  - Модель `TenantStatus`: ACTIVE, TRIAL, SUSPENDED, DELETED, PENDING.
+  - Проверка suspended: в `login/access-token` — 403 при tenant.status=SUSPENDED; в `get_current_tenant_id` (deps) — 403 при каждом запросе к API.
+  - Тест `test_login_suspended_tenant_returns_403` — проходит.
+- **Recovery test (выполнен 2026-03-08):**
+  - Backup: `backups/baseline_2026_03_07.dump`
+  - Restore: `pg_restore -d autoservice_restore_test` в отдельную БД
+  - Backend: поднят на 8003, `alembic upgrade head` применён
+  - Login: OK. Appointments: OK. Clients: OK.
+  - Обновлён `docs/RUNBOOK.md`: заполнена таблица результата, добавлен шаг миграций, зафиксированы поправки.

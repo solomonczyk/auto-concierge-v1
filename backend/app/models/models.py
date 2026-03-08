@@ -16,7 +16,9 @@ class AppointmentStatus(str, Enum):
 
 class TenantStatus(str, Enum):
     ACTIVE = "active"
+    TRIAL = "trial"
     SUSPENDED = "suspended"
+    DELETED = "deleted"
     PENDING = "pending"
 
 class Tariff(str, Enum):
@@ -163,6 +165,7 @@ class AppointmentHistory(Base):
     new_status: Mapped[str] = mapped_column(String(20), nullable=False)
     changed_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     source: Mapped[str] = mapped_column(String(30), nullable=False, default="api")
+    reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     appointment: Mapped["Appointment"] = relationship("Appointment", back_populates="history")
