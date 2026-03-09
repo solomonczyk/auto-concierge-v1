@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 
-from app.bot.client import bot
+from app.bot.client import get_bot
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,10 @@ class NotificationService:
     async def send_raw_message(chat_id: int, text: str):
         """Sends a generic text message to a specific chat."""
         if not chat_id: return
+        bot = get_bot()
+        if bot is None:
+            logger.warning("Telegram bot is not configured")
+            return
         try:
             await bot.send_message(chat_id, text, parse_mode="HTML")
         except Exception as e:
@@ -123,6 +127,10 @@ class NotificationService:
     async def send_booking_confirmation(chat_id: int, text: str, telegram_id: Optional[int] = None):
         """Send confirmation and switch to main menu keyboard."""
         if not chat_id:
+            return
+        bot = get_bot()
+        if bot is None:
+            logger.warning("Telegram bot is not configured")
             return
         try:
             from app.bot.keyboards import get_main_keyboard
@@ -138,6 +146,10 @@ class NotificationService:
     async def notify_admin(text: str):
         """Sends a notification to the configured ADMIN_CHAT_ID."""
         if not settings.ADMIN_CHAT_ID: return
+        bot = get_bot()
+        if bot is None:
+            logger.warning("Telegram bot is not configured")
+            return
         try:
             await bot.send_message(settings.ADMIN_CHAT_ID, text, parse_mode="HTML")
         except Exception as e:
@@ -149,6 +161,10 @@ class NotificationService:
         Sends a notification to the client about their appointment status change.
         """
         if not chat_id:
+            return
+        bot = get_bot()
+        if bot is None:
+            logger.warning("Telegram bot is not configured")
             return
 
         status_messages = {

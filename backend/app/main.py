@@ -17,8 +17,9 @@ from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
 from app.core.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS_TOTAL, HTTP_ERROR_TOTAL
 from app.api.api import api_router
-from app.bot.loader import dp, bot
+from app.bot.loader import dp
 from app.bot.handlers import router as bot_router
+from app.workers.outbox_worker import run_outbox_worker
 
 configure_logging()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -56,8 +57,18 @@ if sys.platform == "win32":
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Lifespan startup initiated")
+    if settings.ENABLE_OUTBOX_WORKER:
+        app.state.outbox_worker_task = asyncio.create_task(run_outbox_worker())
+        logger.info("Outbox worker started")
     yield
     logger.info("Lifespan shutdown initiated")
+    task = getattr(app.state, "outbox_worker_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     try:
         from app.services.redis_service import RedisService
         await RedisService.close()

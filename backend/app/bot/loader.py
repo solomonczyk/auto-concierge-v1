@@ -6,7 +6,6 @@ import logging
 from aiogram import Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
 
-from app.bot.client import bot
 from app.core.config import settings
 
 

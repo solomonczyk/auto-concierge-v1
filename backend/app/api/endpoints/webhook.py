@@ -10,7 +10,8 @@ from app.core.metrics import (
     WEBHOOK_PROCESSED_TOTAL,
 )
 
-from app.bot.loader import bot, dp
+from app.bot.loader import dp
+from app.bot.client import get_bot
 from app.core.config import settings
 
 router = APIRouter()
@@ -59,6 +60,13 @@ async def bot_webhook(
 
     await redis.set(key, "1", ex=86400)
 
+    bot = get_bot()
+    if bot is None:
+        WEBHOOK_REJECTED_TOTAL.inc()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot is not configured",
+        )
     await dp.feed_update(bot, telegram_update)
     WEBHOOK_PROCESSED_TOTAL.inc()
     return {"status": "ok"}
