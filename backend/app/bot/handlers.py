@@ -54,17 +54,22 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+_BOT_UPSERT_SNAPSHOT_SENTINEL = object()
+
+
 def _upsert_appointment_auto_snapshot(
     db,
     appt: Appointment,
     car_make: Optional[str],
     car_year: Optional[int],
     vin: Optional[str],
+    existing_snapshot: object = _BOT_UPSERT_SNAPSHOT_SENTINEL,
 ) -> None:
-    """Create or update AppointmentAutoSnapshot. Skips if all fields are None."""
+    """Create or update AppointmentAutoSnapshot. Skips if all fields are None.
+    Pass existing_snapshot=None for new appt to avoid lazy-load (async greenlet error)."""
     if car_make is None and car_year is None and vin is None:
         return
-    sn = getattr(appt, "auto_snapshot", None)
+    sn = getattr(appt, "auto_snapshot", None) if existing_snapshot is _BOT_UPSERT_SNAPSHOT_SENTINEL else existing_snapshot
     if sn is None:
         sn = AppointmentAutoSnapshot(
             appointment_id=appt.id,
@@ -473,16 +478,27 @@ async def web_app_data_handler(message: Message) -> None:
     """Handle data received from Telegram Web App (booking form)."""
     try:
         data = json.loads(message.web_app_data.data)
+        auto_info = data.get("auto_info") or {}
+
         service_id = data.get("service_id")
         date_str = data.get("date")
         appointment_id = data.get("appointment_id")
         is_waitlist = data.get("is_waitlist", False)
 
-        # Vehicle info (new required fields)
-        car_make = data.get("car_make", "").strip() or None
-        car_year_raw = data.get("car_year")
+        # Vehicle info: auto_info first, fallback to flat fields (legacy)
+        car_make = (
+            auto_info.get("car_make")
+            or data.get("car_make", "")
+        ).strip() or None
+        car_year_raw = (
+            auto_info.get("car_year")
+            or data.get("car_year")
+        )
         car_year = int(car_year_raw) if car_year_raw else None
-        vin = (data.get("vin", "").strip().upper() or None)
+        vin = (
+            auto_info.get("vin")
+            or data.get("vin", "")
+        ).strip().upper() or None
 
         if not service_id or not date_str:
             await message.answer(_invalid_webapp_data_msg(), parse_mode="HTML")
@@ -589,7 +605,7 @@ async def web_app_data_handler(message: Message) -> None:
                 )
                 db.add(new_appt)
                 await db.flush()
-                _upsert_appointment_auto_snapshot(db, new_appt, car_make, car_year, vin)
+                _upsert_appointment_auto_snapshot(db, new_appt, car_make, car_year, vin, existing_snapshot=None)
                 appt = new_appt
 
             await db.commit()

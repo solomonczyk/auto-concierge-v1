@@ -38,17 +38,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_SENTINEL = object()
+
+
 def _upsert_appointment_auto_snapshot(
     db: AsyncSession,
     appt: Appointment,
     car_make: Optional[str],
     car_year: Optional[int],
     vin: Optional[str],
+    existing_snapshot: Optional[AppointmentAutoSnapshot] = _SENTINEL,
 ) -> None:
-    """Create or update AppointmentAutoSnapshot. Skips if all fields are None."""
+    """Create or update AppointmentAutoSnapshot. Skips if all fields are None.
+    Pass existing_snapshot explicitly (None for new appt, loaded snapshot for existing)
+    to avoid lazy-load (async greenlet error)."""
     if car_make is None and car_year is None and vin is None:
         return
-    sn = getattr(appt, "auto_snapshot", None)
+    sn = getattr(appt, "auto_snapshot", None) if existing_snapshot is _SENTINEL else existing_snapshot
     if sn is None:
         sn = AppointmentAutoSnapshot(
             appointment_id=appt.id,
@@ -67,14 +73,26 @@ def _upsert_appointment_auto_snapshot(
 
 
 def _enrich_appointment_auto_fields(appt: Appointment) -> None:
-    """Set car_make, car_year, vin on appt from auto_snapshot for AppointmentRead serialization."""
+    """Set auto_info on appt from auto_snapshot for AppointmentRead serialization."""
     sn = getattr(appt, "auto_snapshot", None)
-    setattr(appt, "car_make", sn.car_make if sn else None)
-    setattr(appt, "car_year", sn.car_year if sn else None)
-    setattr(appt, "vin", sn.vin if sn else None)
+    setattr(
+        appt,
+        "auto_info",
+        AppointmentAutoInfo(
+            car_make=sn.car_make if sn else None,
+            car_year=sn.car_year if sn else None,
+            vin=sn.vin if sn else None,
+        ),
+    )
 
 
 # ─── Pydantic schemas ─────────────────────────────────────────────────────────
+
+class AppointmentAutoInfo(BaseModel):
+    car_make: Optional[str] = None
+    car_year: Optional[int] = None
+    vin: Optional[str] = None
+
 
 class ServiceRead(BaseModel):
     id: int
@@ -88,9 +106,7 @@ class ServiceRead(BaseModel):
 
 class ClientCarInfo(BaseModel):
     full_name: str
-    car_make: Optional[str] = None
-    car_year: Optional[int] = None
-    vin: Optional[str] = None
+    auto_info: Optional[AppointmentAutoInfo] = None
 
     class Config:
         from_attributes = True
@@ -103,9 +119,7 @@ class PublicBookingCreate(BaseModel):
     full_name: str
     appointment_id: Optional[int] = None
     is_waitlist: bool = False
-    car_make: Optional[str] = None
-    car_year: Optional[int] = None
-    vin: Optional[str] = None
+    auto_info: Optional[AppointmentAutoInfo] = None
     timezone: Optional[str] = None
 
 
@@ -134,9 +148,7 @@ class AppointmentRead(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
-    car_make: Optional[str] = None
-    car_year: Optional[int] = None
-    vin: Optional[str] = None
+    auto_info: Optional[AppointmentAutoInfo] = None
     integration_status: Optional[str] = None
     last_integration_error: Optional[str] = None
     last_integration_attempt_at: Optional[datetime] = None
@@ -293,6 +305,11 @@ async def create_public_appointment(
         client_before: Optional[dict] = None
         client_updated = False
 
+        ai = payload.auto_info
+        ai_make = ai.car_make if ai else None
+        ai_year = ai.car_year if ai else None
+        ai_vin = ai.vin if ai else None
+
         def _profile_car_dict(profile: Optional[ClientAutoProfile]) -> dict:
             if not profile:
                 return {"car_make": None, "car_year": None, "vin": None}
@@ -307,38 +324,38 @@ async def create_public_appointment(
             )
             db.add(client)
             await db.flush()
-            if payload.car_make or payload.car_year or payload.vin:
+            if ai_make or ai_year or ai_vin:
                 profile = ClientAutoProfile(
                     client_id=client.id,
-                    car_make=payload.car_make,
-                    car_year=payload.car_year,
-                    vin=payload.vin,
+                    car_make=ai_make,
+                    car_year=ai_year,
+                    vin=ai_vin,
                 )
                 db.add(profile)
             client_is_new = True
         else:
             profile = client.auto_profile
             client_before = {"id": client.id, "full_name": client.full_name, **_profile_car_dict(profile)}
-            if payload.car_make or payload.car_year or payload.vin:
+            if ai_make or ai_year or ai_vin:
                 if profile:
-                    if payload.car_make is not None:
-                        profile.car_make = payload.car_make
-                    if payload.car_year is not None:
-                        profile.car_year = payload.car_year
-                    if payload.vin is not None:
-                        profile.vin = payload.vin
+                    if ai_make is not None:
+                        profile.car_make = ai_make
+                    if ai_year is not None:
+                        profile.car_year = ai_year
+                    if ai_vin is not None:
+                        profile.vin = ai_vin
                 else:
                     profile = ClientAutoProfile(
                         client_id=client.id,
-                        car_make=payload.car_make,
-                        car_year=payload.car_year,
-                        vin=payload.vin,
+                        car_make=ai_make,
+                        car_year=ai_year,
+                        vin=ai_vin,
                     )
                     db.add(profile)
             if client.full_name == "Guest" and payload.full_name:
                 client.full_name = payload.full_name
             client_updated = bool(
-                payload.car_make or payload.car_year or payload.vin
+                ai_make or ai_year or ai_vin
                 or (client_before["full_name"] == "Guest" and payload.full_name)
             )
 
@@ -420,9 +437,8 @@ async def create_public_appointment(
             existing_appt.status = status_val
             _upsert_appointment_auto_snapshot(
                 db, existing_appt,
-                payload.car_make,
-                payload.car_year,
-                payload.vin,
+                ai_make, ai_year, ai_vin,
+                existing_snapshot=getattr(existing_appt, "auto_snapshot", None),
             )
             appt = existing_appt
         else:
@@ -439,14 +455,13 @@ async def create_public_appointment(
             await db.flush()
             _upsert_appointment_auto_snapshot(
                 db, appt,
-                payload.car_make,
-                payload.car_year,
-                payload.vin,
+                ai_make, ai_year, ai_vin,
+                existing_snapshot=None,
             )
 
         # Audit: client create/update
-        if client_is_new or (payload.car_make or payload.car_year or payload.vin):
-            car_after = {"car_make": payload.car_make, "car_year": payload.car_year, "vin": payload.vin}
+        if client_is_new or (ai_make or ai_year or ai_vin):
+            car_after = {"car_make": ai_make, "car_year": ai_year, "vin": ai_vin}
         elif client_before:
             car_after = {"car_make": client_before["car_make"], "car_year": client_before["car_year"], "vin": client_before["vin"]}
         else:
@@ -477,7 +492,7 @@ async def create_public_appointment(
             )
 
         # Audit: appointment create/update
-        car_after_appt = {"car_make": payload.car_make, "car_year": payload.car_year, "vin": payload.vin}
+        car_after_appt = {"car_make": ai_make, "car_year": ai_year, "vin": ai_vin}
         if existing_appt and appt_before:
             await log_audit(
                 db,
@@ -514,9 +529,9 @@ async def create_public_appointment(
 
         await db.commit()
 
-        # Re-fetch with relations
+        # Re-fetch with relations (include client.auto_profile to avoid lazy-load greenlet error)
         stmt = select(Appointment).options(
-            joinedload(Appointment.client),
+            joinedload(Appointment.client).selectinload(Client.auto_profile),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
         ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
@@ -600,7 +615,7 @@ async def create_public_appointment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Public booking error: {e}")
+        logger.error("Public booking error: %s", e)
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервиса")
 
 
@@ -635,7 +650,9 @@ async def get_public_client_car_info(
 
     return ClientCarInfo(
         full_name=client.full_name,
-        car_make=profile.car_make if profile else None,
-        car_year=profile.car_year if profile else None,
-        vin=profile.vin if profile else None,
+        auto_info=AppointmentAutoInfo(
+            car_make=profile.car_make if profile else None,
+            car_year=profile.car_year if profile else None,
+            vin=profile.vin if profile else None,
+        ),
     )

@@ -6,9 +6,11 @@ Covers: services/public, slots/public, appointments/public.
 import pytest
 from datetime import date, datetime, timezone
 from httpx import AsyncClient
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.models import Tenant
+from app.models.models import Tenant, Appointment, Client
 
 
 PUBLIC_TEST_SLUG = "test-tenant"
@@ -173,3 +175,58 @@ async def test_public_booking_waitlist(client: AsyncClient, db_session: AsyncSes
     assert response.status_code == 200
     appt = response.json()
     assert appt["status"] == "waitlist"
+
+
+@pytest.mark.asyncio
+async def test_public_booking_with_auto_info_persists_snapshot_and_profile(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """POST /appointments/public with auto_info creates auto_snapshot and client auto_profile."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    assert svc_res.status_code == 200
+    service_id = svc_res.json()[0]["id"]
+
+    payload = {
+        "service_id": service_id,
+        "date": "2026-02-20T10:00:00",
+        "telegram_id": 888999,
+        "full_name": "Auto Info User",
+        "is_waitlist": True,
+        "auto_info": {
+            "car_make": "Toyota",
+            "car_year": 2018,
+            "vin": "JTDBR32E720040123",
+        },
+    }
+    response = await client.post(f"/api/v1/{slug}/appointments/public", json=payload)
+    assert response.status_code == 200
+    appt_data = response.json()
+    assert appt_data["client"]["id"]
+
+    await db_session.commit()
+    stmt = (
+        select(Appointment)
+        .options(
+            selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.client).selectinload(Client.auto_profile),
+        )
+        .where(
+            and_(
+                Appointment.id == appt_data["id"],
+                Appointment.tenant_id == 1,
+            )
+        )
+    )
+    result = await db_session.execute(stmt)
+    appt = result.scalar_one()
+    assert appt.auto_snapshot is not None
+    assert appt.auto_snapshot.car_make == "Toyota"
+    assert appt.auto_snapshot.car_year == 2018
+    assert appt.auto_snapshot.vin == "JTDBR32E720040123"
+
+    client_entity = appt.client
+    assert client_entity.auto_profile is not None
+    assert client_entity.auto_profile.car_make == "Toyota"
+    assert client_entity.auto_profile.car_year == 2018
+    assert client_entity.auto_profile.vin == "JTDBR32E720040123"
