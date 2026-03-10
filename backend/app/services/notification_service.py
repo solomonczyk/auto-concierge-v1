@@ -1,7 +1,9 @@
 import logging
 from typing import List, Optional
 
-from app.bot.client import get_bot
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.bot.client import get_bot, get_bot_by_tenant_id
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -17,6 +19,7 @@ STATUS_TO_NOTIFICATION_EVENT = {
 class NotificationService:
     @staticmethod
     async def dispatch(
+        db: AsyncSession,
         event_type: str,
         appointment_id: int,
         tenant_id: int,
@@ -57,7 +60,11 @@ class NotificationService:
                         f"🕐 <b>Время:</b> {slot_time}"
                     )
                 await NotificationService.send_booking_confirmation(
-                    client_telegram_id, client_msg, client_telegram_id
+                    db,
+                    tenant_id,
+                    client_telegram_id,
+                    client_msg,
+                    client_telegram_id,
                 )
 
             # Менеджер: только при обычной записи (не waitlist)
@@ -68,9 +75,18 @@ class NotificationService:
                     f"👤 {client_name}\n🔧 {service_name}\n🕐 {slot_time}"
                 )
                 if manager_chat_id:
-                    await NotificationService.send_raw_message(manager_chat_id, manager_msg)
+                    await NotificationService.send_raw_message(
+                        db,
+                        tenant_id,
+                        manager_chat_id,
+                        manager_msg,
+                    )
                 elif settings.ADMIN_CHAT_ID:
-                    await NotificationService.notify_admin(manager_msg)
+                    await NotificationService.notify_admin(
+                        db,
+                        tenant_id,
+                        manager_msg,
+                    )
             return
 
         # appointment_no_show: только менеджеру, клиенту ничего (контракт)
@@ -82,14 +98,23 @@ class NotificationService:
                     f"Запись #{appointment_id}\n"
                     f"Услуга: {service_name}"
                 )
-                await NotificationService.send_raw_message(manager_chat_id, msg)
+                await NotificationService.send_raw_message(
+                    db,
+                    tenant_id,
+                    manager_chat_id,
+                    msg,
+                )
             elif settings.ADMIN_CHAT_ID:
                 msg = (
                     f"⚠️ <b>Клиент не явился</b>\n\n"
                     f"Запись #{appointment_id}\n"
                     f"Услуга: {service_name}"
                 )
-                await NotificationService.notify_admin(msg)
+                await NotificationService.notify_admin(
+                    db,
+                    tenant_id,
+                    msg,
+                )
             return
 
         # Клиентские уведомления (confirmed, cancelled)
@@ -99,24 +124,34 @@ class NotificationService:
 
         if event_type == "appointment_confirmed":
             await NotificationService.notify_client_status_change(
-                chat_id=client_telegram_id,
-                service_name=service_name,
-                new_status="confirmed",
+                db,
+                tenant_id,
+                client_telegram_id,
+                service_name,
+                "confirmed",
             )
         elif event_type == "appointment_cancelled":
             await NotificationService.notify_client_status_change(
-                chat_id=client_telegram_id,
-                service_name=service_name,
-                new_status="cancelled",
+                db,
+                tenant_id,
+                client_telegram_id,
+                service_name,
+                "cancelled",
             )
 
     @staticmethod
-    async def send_raw_message(chat_id: int, text: str):
+    async def send_raw_message(
+        db: AsyncSession,
+        tenant_id: int,
+        chat_id: int,
+        text: str,
+    ):
         """Sends a generic text message to a specific chat."""
-        if not chat_id: return
-        bot = get_bot()
+        if not chat_id:
+            return
+        bot = await get_bot_by_tenant_id(db, tenant_id)
         if bot is None:
-            logger.warning("Telegram bot is not configured")
+            logger.warning("Telegram bot is not configured for tenant_id=%s", tenant_id)
             return
         try:
             await bot.send_message(chat_id, text, parse_mode="HTML")
@@ -124,11 +159,17 @@ class NotificationService:
             logger.error(f"Failed to send raw message to {chat_id}: {e}")
 
     @staticmethod
-    async def send_booking_confirmation(chat_id: int, text: str, telegram_id: Optional[int] = None):
+    async def send_booking_confirmation(
+        db: AsyncSession,
+        tenant_id: int,
+        chat_id: int,
+        text: str,
+        telegram_id: Optional[int] = None,
+    ):
         """Send confirmation and switch to main menu keyboard."""
         if not chat_id:
             return
-        bot = get_bot()
+        bot = await get_bot_by_tenant_id(db, tenant_id)
         if bot is None:
             logger.warning("Telegram bot is not configured")
             return
@@ -143,10 +184,15 @@ class NotificationService:
             logger.error(f"Failed to send booking confirmation to {chat_id}: {e}")
 
     @staticmethod
-    async def notify_admin(text: str):
+    async def notify_admin(
+        db: AsyncSession,
+        tenant_id: int,
+        text: str,
+    ):
         """Sends a notification to the configured ADMIN_CHAT_ID."""
-        if not settings.ADMIN_CHAT_ID: return
-        bot = get_bot()
+        if not settings.ADMIN_CHAT_ID:
+            return
+        bot = await get_bot_by_tenant_id(db, tenant_id)
         if bot is None:
             logger.warning("Telegram bot is not configured")
             return
@@ -156,13 +202,19 @@ class NotificationService:
             logger.error(f"Failed to notify admin: {e}")
 
     @staticmethod
-    async def notify_client_status_change(chat_id: int, service_name: str, new_status: str):
+    async def notify_client_status_change(
+        db: AsyncSession,
+        tenant_id: int,
+        chat_id: int,
+        service_name: str,
+        new_status: str,
+    ):
         """
         Sends a notification to the client about their appointment status change.
         """
         if not chat_id:
             return
-        bot = get_bot()
+        bot = await get_bot_by_tenant_id(db, tenant_id)
         if bot is None:
             logger.warning("Telegram bot is not configured")
             return

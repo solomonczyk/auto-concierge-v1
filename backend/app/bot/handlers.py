@@ -432,6 +432,7 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
             if settings.ADMIN_CHAT_ID:
                 recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
             await NotificationService.dispatch(
+                db,
                 event_type="appointment_cancelled",
                 appointment_id=appt.id,
                 tenant_id=tenant.id,
@@ -634,6 +635,7 @@ async def web_app_data_handler(message: Message) -> None:
                 if settings.ADMIN_CHAT_ID:
                     recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
                 await NotificationService.dispatch(
+                    db,
                     event_type="appointment_created",
                     appointment_id=appt.id,
                     tenant_id=tenant.id,
