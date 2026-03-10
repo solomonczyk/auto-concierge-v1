@@ -6,6 +6,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
+from app.services.tenant_settings_service import get_tenant_timezone
 from app.db.session import async_session_local
 from app.models.models import Appointment, AppointmentStatus
 
@@ -14,8 +15,8 @@ logger = logging.getLogger(__name__)
 REMIND_STATUSES = {AppointmentStatus.NEW, AppointmentStatus.CONFIRMED}
 
 
-def _format_time(dt: datetime) -> str:
-    tz = ZoneInfo(settings.SHOP_TIMEZONE)
+def _format_time(dt: datetime, timezone_name: str) -> str:
+    tz = ZoneInfo(timezone_name)
     local_dt = dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
     return local_dt.strftime("%d.%m.%Y в %H:%M")
 
@@ -40,6 +41,7 @@ async def _fetch_appointments_for_date(target_date) -> list:
                     Appointment.start_time >= start_utc,
                     Appointment.start_time < end_utc,
                     Appointment.status.in_(REMIND_STATUSES),
+                    Appointment.deleted_at.is_(None),
                 )
             )
         )
@@ -63,7 +65,8 @@ async def send_evening_reminders():
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            time_str = _format_time(appt.start_time)
+            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"🔔 <b>Напоминание!</b>\n\n"
                 f"Завтра <b>{time_str}</b> у вас запись:\n"
@@ -97,7 +100,8 @@ async def send_morning_reminders():
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            time_str = _format_time(appt.start_time)
+            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"🌅 <b>Доброе утро!</b>\n\n"
                 f"Сегодня <b>{time_str}</b> у вас запись:\n"
@@ -145,7 +149,8 @@ async def send_one_hour_reminders():
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            time_str = _format_time(appt.start_time)
+            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"⏰ <b>Напоминание!</b>\n\n"
                 f"Через час у вас запись:\n"

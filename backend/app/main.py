@@ -20,6 +20,7 @@ from app.api.api import api_router
 from app.bot.loader import dp
 from app.bot.handlers import router as bot_router
 from app.workers.outbox_worker import run_outbox_worker
+from app.workers.reminder_worker import run_reminder_worker
 
 configure_logging()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -60,9 +61,19 @@ async def lifespan(app: FastAPI):
     if settings.ENABLE_OUTBOX_WORKER:
         app.state.outbox_worker_task = asyncio.create_task(run_outbox_worker())
         logger.info("Outbox worker started")
+    if settings.ENABLE_REMINDER_WORKER:
+        app.state.reminder_worker_task = asyncio.create_task(run_reminder_worker())
+        logger.info("Reminder worker started")
     yield
     logger.info("Lifespan shutdown initiated")
     task = getattr(app.state, "outbox_worker_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    task = getattr(app.state, "reminder_worker_task", None)
     if task is not None:
         task.cancel()
         try:

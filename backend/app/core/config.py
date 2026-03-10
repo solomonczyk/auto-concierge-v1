@@ -76,6 +76,15 @@ class Settings(BaseSettings):
 
     # Environment mode
     ENVIRONMENT: str = "development"
+
+    # Outbox worker: run transactional outbox dispatcher in background (set ENABLE_OUTBOX_WORKER=true in .env)
+    ENABLE_OUTBOX_WORKER: bool = False
+
+    # Reminder worker: run appointment reminders (evening 20:00, morning 08:00, 1h before)
+    ENABLE_REMINDER_WORKER: bool = False
+
+    # External integration: HTTP timeout for 1C, Alpha-Auto, etc.
+    EXTERNAL_INTEGRATION_TIMEOUT_SECONDS: float = 5.0
     # PUBLIC_TENANT_ID is deprecated — tenant is now resolved via slug in the URL
     TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
