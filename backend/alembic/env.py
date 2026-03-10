@@ -21,7 +21,9 @@ if config.config_file_name is not None:
 from app.models.models import Base
 from app.core.config import settings
 from app.db.session import Base
-from app.models.models import User, Shop, Service, Client, Appointment # Explicit imports.metadata
+from app.models.models import User, Shop, Service, Client, Appointment  # Explicit imports for metadata
+from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
+from app.models.telegram_bot import TelegramBot
 
 target_metadata = Base.metadata
 
