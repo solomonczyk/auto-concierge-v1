@@ -103,6 +103,10 @@ _ws_auth_mod.async_session_local = test_async_session
 import app.db.session as _db_session_mod
 _db_session_mod.async_session_local = test_async_session
 
+# Reminder service imports async_session_local before conftest patch — override explicitly
+import app.services.reminder_service as _reminder_service_mod
+_reminder_service_mod.async_session_local = test_async_session
+
 # Disable rate limiter for tests (avoids 429 on repeated login)
 from app.api.endpoints import login
 login.limiter.enabled = False
@@ -140,11 +144,21 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
     """Provide a clean database session for each test"""
     async with test_async_session() as session:
         # Clean previous test data (file-based DB persists across tests)
-        for table in ("appointment_history", "appointments", "clients", "services", "users", "shops", "tenants", "tariff_plans"):
-            try:
-                await session.execute(text(f"DELETE FROM {table}"))
-            except Exception:
-                pass
+        for table in (
+            "appointment_history",
+            "appointment_intakes",
+            "appointment_auto_snapshots",
+            "appointments",
+            "client_auto_profiles",
+            "clients",
+            "services",
+            "users",
+            "shops",
+            "tenant_settings",
+            "tenants",
+            "tariff_plans",
+        ):
+            await session.execute(text(f"DELETE FROM {table}"))
         await session.commit()
 
         # Begin transaction for seeding
