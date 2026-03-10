@@ -11,16 +11,19 @@ from app.core.metrics import (
 )
 
 from app.bot.loader import dp
-from app.bot.client import get_bot
+from app.bot.bot_registry import bot_registry
+from app.db.session import async_session_local
+from app.services.telegram_bot_service import get_active_telegram_bot_token_by_username
 from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/webhook")
+@router.post("/webhook/{bot_username}")
 @limiter.limit("120/minute")
 async def bot_webhook(
+    bot_username: str,
     request: Request,
     update: dict,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
@@ -60,13 +63,17 @@ async def bot_webhook(
 
     await redis.set(key, "1", ex=86400)
 
-    bot = get_bot()
-    if bot is None:
-        WEBHOOK_REJECTED_TOTAL.inc()
+    async with async_session_local() as db:
+        token = await get_active_telegram_bot_token_by_username(db, bot_username)
+
+    if not token:
+        WEBHOOK_REJECTED_TOTAL.labels(reason="unknown_bot").inc()
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Telegram bot is not configured",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bot not found",
         )
+
+    bot = bot_registry.get_bot(token)
     await dp.feed_update(bot, telegram_update)
     WEBHOOK_PROCESSED_TOTAL.inc()
     return {"status": "ok"}

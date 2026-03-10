@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.client import get_bot, get_bot_by_tenant_id
+from app.bot.client import get_bot_by_tenant_id
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
