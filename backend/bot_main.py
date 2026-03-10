@@ -9,7 +9,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from app.core.config import settings
-from app.bot.loader import bot, dp
+from app.bot.loader import dp
+from app.bot.client import get_bot
 from app.bot.handlers import router as bot_router
 
 
@@ -46,6 +47,10 @@ def _start_scheduler():
 async def main():
     logger.info("Starting bot standalone...")
     dp.include_router(bot_router)
+
+    bot = get_bot()
+    if bot is None:
+        raise RuntimeError("Telegram bot is not configured")
 
     await bot.delete_webhook(drop_pending_updates=True)
 

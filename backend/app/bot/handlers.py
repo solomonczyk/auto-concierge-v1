@@ -42,7 +42,7 @@ from app.bot.messages import (
     _admin_new_booking_msg, _admin_cancelled_msg,
 )
 from app.bot.states import ConsultForm
-from app.bot.tenant import get_or_create_tenant, get_tenant_shop
+from app.bot.tenant import get_or_create_tenant_from_bot, get_tenant_shop
 from app.core.slots import get_available_slots
 from app.services.redis_service import RedisService
 from app.core.config import settings
@@ -98,7 +98,7 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.clear()
 
     async with async_session_local() as db:
-        tenant = await get_or_create_tenant(db)
+        tenant = await get_or_create_tenant_from_bot(db, message.bot)
 
         stmt = select(Client).where(
             and_(Client.telegram_id == message.from_user.id, Client.tenant_id == tenant.id)
@@ -124,7 +124,7 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 async def demo_command_handler(message: Message) -> None:
     """Run demo workflow from bot command for demo tenant only."""
     async with async_session_local() as db:
-        tenant = await get_or_create_tenant(db)
+        tenant = await get_or_create_tenant_from_bot(db, message.bot)
 
     if tenant.slug != "demo-service":
         await message.answer("⚠️ Команда /demo доступна только для demo tenant.")
@@ -153,7 +153,7 @@ async def contact_handler(message: Message) -> None:
     phone = contact.phone_number.replace("+", "")
 
     async with async_session_local() as db:
-        tenant = await get_or_create_tenant(db)
+        tenant = await get_or_create_tenant_from_bot(db, message.bot)
 
         stmt = select(Client).where(
             and_(Client.phone == phone, Client.tenant_id == tenant.id)
@@ -213,7 +213,7 @@ async def legal_info_handler(message: Message) -> None:
 async def my_appointments(message: Message) -> None:
     """Show user's active appointments."""
     async with async_session_local() as db:
-        tenant = await get_or_create_tenant(db)
+        tenant = await get_or_create_tenant_from_bot(db, message.bot)
 
         stmt = select(Client).where(
             and_(Client.telegram_id == message.from_user.id, Client.tenant_id == tenant.id)
@@ -295,7 +295,7 @@ async def consultation_message_handler(message: Message, state: FSMContext) -> N
 
     try:
         async with async_session_local() as db:
-            tenant = await get_or_create_tenant(db)
+            tenant = await get_or_create_tenant_from_bot(db, message.bot)
             tenant_id_for_services = tenant.id
             stmt = select(Service).where(Service.tenant_id == tenant_id_for_services)
             result = await db.execute(stmt)
@@ -391,7 +391,7 @@ async def cancel_appointment_handler(callback_query: CallbackQuery) -> None:
     appt_id = int(callback_query.data.split(":")[1])
 
     async with async_session_local() as db:
-        tenant = await get_or_create_tenant(db)
+        tenant = await get_or_create_tenant_from_bot(db, callback_query.bot)
 
         stmt = select(Appointment).options(
             joinedload(Appointment.client),
@@ -508,7 +508,7 @@ async def web_app_data_handler(message: Message) -> None:
         start_time_naive = start_time.replace(tzinfo=None)
 
         async with async_session_local() as db:
-            tenant = await get_or_create_tenant(db)
+            tenant = await get_or_create_tenant_from_bot(db, message.bot)
 
             # Get service
             stmt = select(Service).where(
