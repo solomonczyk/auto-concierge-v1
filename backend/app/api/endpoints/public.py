@@ -18,10 +18,11 @@ from app.core.config import settings
 from app.core.rate_limit import PUBLIC_BOOKING_RATE_LIMIT, limiter
 from app.core.slots import get_available_slots
 from app.core.tenant_resolver import get_tenant_id_by_slug
-from app.db.session import get_db
+from app.db.session import get_db, async_session_local
 from app.bot.tenant import get_tenant_shop
 from app.models.models import (
     Appointment,
+    AppointmentHistory,
     AppointmentStatus,
     Client,
     Service,
@@ -29,6 +30,7 @@ from app.models.models import (
 )
 from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from app.services.audit_service import log_audit
+from app.services.outbox_service import enqueue_appointment_created_event, enqueue_appointment_updated_event
 from app.services.redis_service import RedisService
 from app.services.usage_service import check_appointments_limit, LimitExceededError
 from fastapi import status
@@ -37,6 +39,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+TERMINAL_STATUSES = (
+    AppointmentStatus.COMPLETED,
+    AppointmentStatus.CANCELLED,
+    AppointmentStatus.NO_SHOW,
+)
 
 _SENTINEL = object()
 
@@ -421,12 +428,13 @@ async def create_public_appointment(
         appt_before: Optional[dict] = None
         if existing_appt:
             sn_old = getattr(existing_appt, "auto_snapshot", None)
+            old_status = existing_appt.status
             appt_before = {
                 "id": existing_appt.id,
                 "service_id": existing_appt.service_id,
                 "start_time": existing_appt.start_time.isoformat() if existing_appt.start_time else None,
                 "end_time": existing_appt.end_time.isoformat() if existing_appt.end_time else None,
-                "status": existing_appt.status.value if existing_appt.status else None,
+                "status": old_status.value if old_status else None,
                 "car_make": sn_old.car_make if sn_old else None,
                 "car_year": sn_old.car_year if sn_old else None,
                 "vin": sn_old.vin if sn_old else None,
@@ -440,7 +448,22 @@ async def create_public_appointment(
                 ai_make, ai_year, ai_vin,
                 existing_snapshot=getattr(existing_appt, "auto_snapshot", None),
             )
+            db.add(
+                AppointmentHistory(
+                    appointment_id=existing_appt.id,
+                    tenant_id=tenant_id,
+                    old_status=old_status.value,
+                    new_status=status_val.value,
+                    changed_by_user_id=None,
+                    source="public",
+                )
+            )
             appt = existing_appt
+            await enqueue_appointment_updated_event(
+                db,
+                tenant_id=tenant_id,
+                appointment_id=appt.id,
+            )
         else:
             appt = Appointment(
                 tenant_id=tenant_id,
@@ -453,6 +476,11 @@ async def create_public_appointment(
             )
             db.add(appt)
             await db.flush()
+            await enqueue_appointment_created_event(
+                db,
+                tenant_id=tenant_id,
+                appointment_id=appt.id,
+            )
             _upsert_appointment_auto_snapshot(
                 db, appt,
                 ai_make, ai_year, ai_vin,
@@ -568,20 +596,23 @@ async def create_public_appointment(
                 recipient_ids = {"client_telegram_id": payload.telegram_id}
                 if settings.ADMIN_CHAT_ID:
                     recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
-                await NotificationService.dispatch(
-                    event_type="appointment_created",
-                    appointment_id=appt.id,
-                    tenant_id=tenant_id,
-                    recipient_roles=recipient_roles,
-                    recipient_ids=recipient_ids,
-                    context={
-                        "service_name": service.name,
-                        "slot_time": time_str,
-                        "date_str": start_time_naive.strftime("%d.%m.%Y"),
-                        "is_waitlist": payload.is_waitlist,
-                        "client_name": payload.full_name,
-                    },
-                )
+
+                async with async_session_local() as db:
+                    await NotificationService.dispatch(
+                        db,
+                        event_type="appointment_created",
+                        appointment_id=appt.id,
+                        tenant_id=tenant_id,
+                        recipient_roles=recipient_roles,
+                        recipient_ids=recipient_ids,
+                        context={
+                            "service_name": service.name,
+                            "slot_time": time_str,
+                            "date_str": start_time_naive.strftime("%d.%m.%Y"),
+                            "is_waitlist": payload.is_waitlist,
+                            "client_name": payload.full_name,
+                        },
+                    )
             except Exception as e:
                 logger.error(f"Notification error: {e}")
 
@@ -617,6 +648,150 @@ async def create_public_appointment(
     except Exception as e:
         logger.error("Public booking error: %s", e)
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервиса")
+
+
+# ─── GET /appointments/public/current ──────────────────────────────────────────
+
+@router.get("/appointments/public/current", response_model=AppointmentRead)
+@limiter.limit("30/minute")
+async def get_public_current_appointment(
+    request: Request,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Client)
+        .where(
+            and_(
+                Client.telegram_id == telegram_id,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
+    )
+    result = await db.execute(stmt)
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
+    appt_stmt = (
+        select(Appointment)
+        .where(
+            and_(
+                Appointment.client_id == client.id,
+                Appointment.tenant_id == tenant_id,
+                Appointment.deleted_at.is_(None),
+                Appointment.status.notin_(TERMINAL_STATUSES),
+            )
+        )
+        .options(
+            joinedload(Appointment.client).selectinload(Client.auto_profile),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
+        .order_by(Appointment.start_time)
+        .limit(1)
+    )
+    appt_result = await db.execute(appt_stmt)
+    appt = appt_result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Активная запись не найдена")
+
+    _enrich_appointment_auto_fields(appt)
+    return appt
+
+
+# ─── PATCH /appointments/public/cancel ────────────────────────────────────────
+
+@router.patch("/appointments/public/cancel", response_model=AppointmentRead)
+@limiter.limit("30/minute")
+async def cancel_public_appointment(
+    request: Request,
+    telegram_id: int = Query(...),
+    appointment_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Client)
+        .where(
+            and_(
+                Client.telegram_id == telegram_id,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
+    )
+    result = await db.execute(stmt)
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+
+    appt_stmt = (
+        select(Appointment)
+        .where(
+            and_(
+                Appointment.id == appointment_id,
+                Appointment.client_id == client.id,
+                Appointment.tenant_id == tenant_id,
+                Appointment.deleted_at.is_(None),
+            )
+        )
+    )
+    appt_result = await db.execute(appt_stmt)
+    appt = appt_result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    if appt.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Запись уже в финальном статусе и не может быть отменена",
+        )
+
+    old_status = appt.status
+    appt.status = AppointmentStatus.CANCELLED
+
+    db.add(
+        AppointmentHistory(
+            appointment_id=appt.id,
+            tenant_id=tenant_id,
+            old_status=old_status.value,
+            new_status=AppointmentStatus.CANCELLED.value,
+            changed_by_user_id=None,
+            source="public",
+        )
+    )
+
+    await enqueue_appointment_updated_event(
+        db,
+        tenant_id=tenant_id,
+        appointment_id=appt.id,
+    )
+
+    await db.commit()
+
+    stmt_refresh = (
+        select(Appointment)
+        .where(
+            and_(
+                Appointment.id == appt.id,
+                Appointment.tenant_id == tenant_id,
+            )
+        )
+        .options(
+            joinedload(Appointment.client).selectinload(Client.auto_profile),
+            joinedload(Appointment.service),
+            selectinload(Appointment.auto_snapshot),
+        )
+    )
+    refreshed = (await db.execute(stmt_refresh)).scalar_one_or_none()
+    if refreshed:
+        appt = refreshed
+
+    _enrich_appointment_auto_fields(appt)
+    return appt
 
 
 # ─── GET /clients/public ──────────────────────────────────────────────────────

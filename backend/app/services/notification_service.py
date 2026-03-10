@@ -13,6 +13,7 @@ STATUS_TO_NOTIFICATION_EVENT = {
     "confirmed": "appointment_confirmed",
     "cancelled": "appointment_cancelled",
     "no_show": "appointment_no_show",
+    "completed": "appointment_completed",
 }
 
 
@@ -137,6 +138,14 @@ class NotificationService:
                 client_telegram_id,
                 service_name,
                 "cancelled",
+            )
+        elif event_type == "appointment_completed":
+            await NotificationService.notify_client_status_change(
+                db,
+                tenant_id,
+                client_telegram_id,
+                service_name,
+                "completed",
             )
 
     @staticmethod
