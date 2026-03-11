@@ -2016,3 +2016,10 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Schema unification: TenantReadinessFlags, TenantReadinessResponse, TenantControlPlaneItem.
 - telegram_webhook_active: multi-bot — хотя бы один active bot с webhook_secret.
 - tests/test_tenant_control_plane.py — 7 тестов (access, 404, readiness empty/fully).
+
+## 2026-03-11 — Tenant Control Action Endpoint
+
+- POST /api/v1/tenants/{tenant_id}/control-plane/activate-bot — control-plane action validate tenant ready for bot activation (SUPERADMIN only).
+- ActivateBotControlPlaneResponse: tenant_id, action, success, message.
+- 404: tenant not found. 409: no active bot; bot has no webhook_secret.
+- tests: 200 success, 404, 409 (no bot), 409 (no webhook_secret), 403 non-superadmin.

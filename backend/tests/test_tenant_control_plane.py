@@ -125,3 +125,83 @@ async def test_readiness_fully_configured_tenant(
     assert data["telegram_bot_registered"] is True
     assert data["telegram_webhook_active"] is True
     assert data["booking_ready"] is True
+
+
+# --- Activate-bot control-plane action ---
+
+
+@pytest.mark.asyncio
+async def test_activate_bot_200_success(
+    client_superadmin: AsyncClient,
+    db_session: AsyncSession,
+):
+    """POST /tenants/{id}/control-plane/activate-bot → 200 when bot ready."""
+    bot = TelegramBot(
+        tenant_id=1,
+        bot_token="test-token",
+        bot_username="testbot",
+        webhook_secret="secret123",
+        is_active=True,
+    )
+    db_session.add(bot)
+    await db_session.commit()
+
+    res = await client_superadmin.post("/api/v1/tenants/1/control-plane/activate-bot")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["tenant_id"] == 1
+    assert data["action"] == "activate_bot"
+    assert data["success"] is True
+    assert "ready for activation" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_activate_bot_404_tenant_not_found(client_superadmin: AsyncClient):
+    """POST /tenants/{id}/control-plane/activate-bot → 404 if tenant not found."""
+    res = await client_superadmin.post("/api/v1/tenants/99999/control-plane/activate-bot")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_activate_bot_409_no_active_bot(
+    client_superadmin: AsyncClient,
+    db_session: AsyncSession,
+):
+    """POST /tenants/{id}/control-plane/activate-bot → 409 when no active bot."""
+    tenant = Tenant(name="NoBot", status=TenantStatus.ACTIVE, tariff_plan_id=1)
+    db_session.add(tenant)
+    await db_session.flush()
+    tid = tenant.id
+    await db_session.commit()
+
+    res = await client_superadmin.post(f"/api/v1/tenants/{tid}/control-plane/activate-bot")
+    assert res.status_code == 409
+    assert "No active" in res.json().get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_activate_bot_409_no_webhook_secret(
+    client_superadmin: AsyncClient,
+    db_session: AsyncSession,
+):
+    """POST /tenants/{id}/control-plane/activate-bot → 409 when bot has no webhook_secret."""
+    bot = TelegramBot(
+        tenant_id=1,
+        bot_token="test-token",
+        bot_username="testbot",
+        webhook_secret=None,
+        is_active=True,
+    )
+    db_session.add(bot)
+    await db_session.commit()
+
+    res = await client_superadmin.post("/api/v1/tenants/1/control-plane/activate-bot")
+    assert res.status_code == 409
+    assert "webhook secret" in res.json().get("detail", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_activate_bot_403_non_superadmin(client_auth: AsyncClient):
+    """Regular admin → 403 on activate-bot."""
+    res = await client_auth.post("/api/v1/tenants/1/control-plane/activate-bot")
+    assert res.status_code == 403

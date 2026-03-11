@@ -4,6 +4,7 @@ POST /api/v1/tenants — creates tenant + default shop + admin user + default se
 GET /api/v1/tenants/control-plane — list all tenants with readiness (SUPERADMIN).
 GET /api/v1/tenants/{tenant_id}/control-plane — tenant control-plane detail (SUPERADMIN).
 GET /api/v1/tenants/{tenant_id}/readiness — tenant readiness status (SUPERADMIN).
+POST /api/v1/tenants/{tenant_id}/control-plane/activate-bot — validate tenant ready for bot activation (SUPERADMIN).
 """
 import logging
 import re
@@ -17,6 +18,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
+from app.models.telegram_bot import TelegramBot
 from app.services.tenant_readiness_service import compute_tenant_readiness
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,15 @@ class TenantControlPlaneItem(TenantReadinessFlags):
     tenant_id: int
     name: str
     is_active: bool
+
+
+class ActivateBotControlPlaneResponse(BaseModel):
+    """Control-plane action result for activate-bot."""
+
+    tenant_id: int
+    action: str = "activate_bot"
+    success: bool = True
+    message: str = "Telegram bot is ready for activation"
 
 
 async def _seed_default_services(db: AsyncSession, tenant_id: int) -> int:
@@ -293,3 +304,44 @@ async def get_tenant_readiness(
 
     flags = await compute_tenant_readiness(db, tenant_id)
     return TenantReadinessResponse(tenant_id=tenant_id, **flags)
+
+
+@router.post(
+    "/{tenant_id}/control-plane/activate-bot",
+    response_model=ActivateBotControlPlaneResponse,
+    summary="Control-plane: validate tenant ready for bot activation (SUPERADMIN only)",
+)
+async def activate_bot_control_plane(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> ActivateBotControlPlaneResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    bot = (
+        await db.execute(
+            select(TelegramBot).where(
+                TelegramBot.tenant_id == tenant_id,
+                TelegramBot.is_active.is_(True),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not bot:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active Telegram bot for tenant",
+        )
+    if not bot.webhook_secret or not bot.webhook_secret.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bot has no webhook secret; run activate webhook first",
+        )
+
+    return ActivateBotControlPlaneResponse(
+        tenant_id=tenant_id,
+        action="activate_bot",
+        success=True,
+        message="Telegram bot is ready for activation",
+    )
