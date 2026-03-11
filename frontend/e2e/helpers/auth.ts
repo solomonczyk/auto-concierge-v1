@@ -20,12 +20,6 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   }
   // Backend sets Set-Cookie; request context stores it for same-origin
   await page.goto('/concierge/', { waitUntil: 'networkidle' })
-  console.log('POST-LOGIN URL:', page.url())
-  console.log('BROWSER COOKIES:', await page.context().cookies())
-  console.log('PAGE BODY TEXT:', await page.locator('body').innerText())
-  console.log('DASHBOARD ROOT COUNT:', await page.locator('[data-testid="dashboard-root"]').count())
-  console.log('BODY FIRST DIV HTML:', await page.locator('body > div').first().evaluate(el => el.outerHTML))
-  console.log('FULL PAGE HTML:', await page.content())
   await page.waitForSelector('[data-testid="dashboard-root"]', { state: 'visible', timeout: 15000 })
 }
 
