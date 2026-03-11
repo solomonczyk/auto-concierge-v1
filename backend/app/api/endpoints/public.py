@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -28,6 +29,9 @@ from app.models.models import (
     Service,
     Tenant,
 )
+from app.models.appointment_intake import AppointmentIntake
+from app.schemas.appointment_intake import AppointmentIntakeRead
+from app.api.endpoints.appointments import AppointmentIntakeAnswersUpdate
 from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from app.services.audit_service import log_audit
 from app.services.outbox_service import enqueue_appointment_created_event, enqueue_appointment_updated_event
@@ -161,6 +165,7 @@ class AppointmentRead(BaseModel):
     last_integration_attempt_at: Optional[datetime] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
+    intake: Optional[AppointmentIntakeRead] = None
 
     class Config:
         from_attributes = True
@@ -220,6 +225,9 @@ async def create_public_appointment(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        redis = None
+        lock_acquired = False
+        lock_key = None
         # 1. Parse date
         try:
             start_time = datetime.fromisoformat(payload.date.replace("Z", "+00:00"))
@@ -411,7 +419,7 @@ async def create_public_appointment(
                 if res_collide.scalars().first():
                     raise HTTPException(status_code=409, detail="Это время уже занято")
             finally:
-                if redis and lock_acquired and not payload.appointment_id:
+                if False:
                     try:
                         await redis.delete(lock_key)
                     except Exception as redis_error:
@@ -476,6 +484,11 @@ async def create_public_appointment(
             )
             db.add(appt)
             await db.flush()
+            intake = AppointmentIntake(
+                appointment_id=appt.id,
+                status="pending",
+            )
+            db.add(intake)
             await enqueue_appointment_created_event(
                 db,
                 tenant_id=tenant_id,
@@ -557,11 +570,22 @@ async def create_public_appointment(
 
         await db.commit()
 
+        if not payload.is_waitlist and redis and lock_acquired:
+            try:
+                await redis.delete(lock_key)
+            except Exception as redis_error:
+                logger.warning(
+                    "Public booking lock release failed for %s: %s",
+                    lock_key,
+                    redis_error,
+                )
+
         # Re-fetch with relations (include client.auto_profile to avoid lazy-load greenlet error)
         stmt = select(Appointment).options(
             joinedload(Appointment.client).selectinload(Client.auto_profile),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
         result = await db.execute(stmt)
         refreshed_appt = result.scalar_one_or_none()
@@ -644,8 +668,41 @@ async def create_public_appointment(
         return appt
 
     except HTTPException:
+        if not payload.is_waitlist and redis and lock_acquired:
+            try:
+                await redis.delete(lock_key)
+            except Exception as redis_error:
+                logger.warning(
+                    "Public booking lock release failed for %s: %s",
+                    lock_key,
+                    redis_error,
+                )
         raise
+    except IntegrityError as e:
+        if not payload.is_waitlist and redis and lock_acquired:
+            try:
+                await redis.delete(lock_key)
+            except Exception as redis_error:
+                logger.warning(
+                    "Public booking lock release failed for %s: %s",
+                    lock_key,
+                    redis_error,
+                )
+        logger.warning("Booking overlap detected at DB level: %s", e)
+        raise HTTPException(
+            status_code=409,
+            detail="Это время уже занято. Пожалуйста выберите другой слот",
+        )
     except Exception as e:
+        if not payload.is_waitlist and redis and lock_acquired:
+            try:
+                await redis.delete(lock_key)
+            except Exception as redis_error:
+                logger.warning(
+                    "Public booking lock release failed for %s: %s",
+                    lock_key,
+                    redis_error,
+                )
         logger.error("Public booking error: %s", e)
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервиса")
 
@@ -689,6 +746,7 @@ async def get_public_current_appointment(
             joinedload(Appointment.client).selectinload(Client.auto_profile),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .order_by(Appointment.start_time)
         .limit(1)
@@ -700,6 +758,76 @@ async def get_public_current_appointment(
 
     _enrich_appointment_auto_fields(appt)
     return appt
+
+
+@router.get("/appointments/public/{appointment_id}/intake", response_model=AppointmentIntakeRead)
+@limiter.limit("30/minute")
+async def get_public_appointment_intake(
+    request: Request,
+    appointment_id: int,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.intake))
+        .join(Client, Appointment.client_id == Client.id)
+        .where(
+            and_(
+                Appointment.id == appointment_id,
+                Appointment.tenant_id == tenant_id,
+                Appointment.deleted_at.is_(None),
+                Client.telegram_id == telegram_id,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if not appt.intake:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    return appt.intake
+
+
+@router.patch("/appointments/public/{appointment_id}/intake/answers", response_model=AppointmentIntakeRead)
+@limiter.limit("30/minute")
+async def update_public_appointment_intake_answers(
+    request: Request,
+    appointment_id: int,
+    payload: AppointmentIntakeAnswersUpdate,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.intake))
+        .join(Client, Appointment.client_id == Client.id)
+        .where(
+            and_(
+                Appointment.id == appointment_id,
+                Appointment.tenant_id == tenant_id,
+                Appointment.deleted_at.is_(None),
+                Client.telegram_id == telegram_id,
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if not appt.intake:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    appt.intake.answers_json = payload.answers_json
+    await db.commit()
+    await db.refresh(appt.intake)
+    return appt.intake
 
 
 # ─── PATCH /appointments/public/cancel ────────────────────────────────────────
