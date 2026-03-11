@@ -5,6 +5,7 @@ GET /api/v1/tenants/control-plane — list all tenants with readiness (SUPERADMI
 GET /api/v1/tenants/{tenant_id}/control-plane — tenant control-plane detail (SUPERADMIN).
 GET /api/v1/tenants/{tenant_id}/readiness — tenant readiness status (SUPERADMIN).
 POST /api/v1/tenants/{tenant_id}/control-plane/activate-bot — validate tenant ready for bot activation (SUPERADMIN).
+POST /api/v1/tenants/{tenant_id}/control-plane/provision-webhook — provision Telegram webhook via API (SUPERADMIN).
 """
 import logging
 import re
@@ -19,7 +20,8 @@ from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
 from app.models.telegram_bot import TelegramBot
-from app.services.tenant_readiness_service import compute_tenant_readiness
+from app.services.tenant_readiness_service import compute_tenant_readiness, get_webhook_operational_state
+from app.services.telegram_webhook_service import provision_telegram_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +101,14 @@ class TenantReadinessResponse(TenantReadinessFlags):
 
 
 class TenantControlPlaneItem(TenantReadinessFlags):
-    """Control-plane list/detail — tenant_id, name, is_active + flags."""
+    """Control-plane list/detail — tenant_id, name, is_active + flags + webhook operational state."""
 
     tenant_id: int
     name: str
     is_active: bool
+    webhook_status: str | None = None
+    webhook_last_error: str | None = None
+    webhook_last_synced_at: str | None = None
 
 
 class ActivateBotControlPlaneResponse(BaseModel):
@@ -113,6 +118,17 @@ class ActivateBotControlPlaneResponse(BaseModel):
     action: str = "activate_bot"
     success: bool = True
     message: str = "Telegram bot is ready for activation"
+
+
+class ProvisionWebhookControlPlaneResponse(BaseModel):
+    """Control-plane action result for provision-webhook."""
+
+    tenant_id: int
+    action: str = "provision_webhook"
+    success: bool
+    status: str
+    message: str
+    error: str | None = None
 
 
 async def _seed_default_services(db: AsyncSession, tenant_id: int) -> int:
@@ -251,15 +267,15 @@ async def get_tenants_control_plane(
     items = []
     for tenant in tenants:
         # TODO: N+1 — list endpoint does one compute_tenant_readiness per tenant.
-        # Future optimization: batch readiness aggregation (single bulk query /
-        # subqueries / EXISTS aggregation) instead of per-tenant calls.
         flags = await compute_tenant_readiness(db, tenant.id)
+        webhook_state = await get_webhook_operational_state(db, tenant.id)
         items.append(
             TenantControlPlaneItem(
                 tenant_id=tenant.id,
                 name=tenant.name or "",
                 is_active=tenant.status == TenantStatus.ACTIVE,
                 **flags,
+                **webhook_state,
             )
         )
     return items
@@ -280,11 +296,13 @@ async def get_tenant_control_plane_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
 
     flags = await compute_tenant_readiness(db, tenant_id)
+    webhook_state = await get_webhook_operational_state(db, tenant_id)
     return TenantControlPlaneItem(
         tenant_id=tenant.id,
         name=tenant.name or "",
         is_active=tenant.status == TenantStatus.ACTIVE,
         **flags,
+        **webhook_state,
     )
 
 
@@ -344,4 +362,54 @@ async def activate_bot_control_plane(
         action="activate_bot",
         success=True,
         message="Telegram bot is ready for activation",
+    )
+
+
+@router.post(
+    "/{tenant_id}/control-plane/provision-webhook",
+    response_model=ProvisionWebhookControlPlaneResponse,
+    summary="Control-plane: provision Telegram webhook via API (SUPERADMIN only)",
+)
+async def provision_webhook_control_plane(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> ProvisionWebhookControlPlaneResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    bot = (
+        await db.execute(
+            select(TelegramBot).where(
+                TelegramBot.tenant_id == tenant_id,
+                TelegramBot.is_active.is_(True),
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if not bot:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active Telegram bot for tenant",
+        )
+    if not bot.webhook_secret or not bot.webhook_secret.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bot has no webhook secret; run activate webhook first",
+        )
+    if not bot.bot_username or not bot.bot_username.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bot has no username; required for webhook URL",
+        )
+
+    result = await provision_telegram_webhook(db, bot)
+
+    return ProvisionWebhookControlPlaneResponse(
+        tenant_id=tenant_id,
+        action="provision_webhook",
+        success=result.success,
+        status=result.status,
+        message=result.message,
+        error=result.error,
     )

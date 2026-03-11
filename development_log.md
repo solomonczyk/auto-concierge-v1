@@ -2023,3 +2023,17 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - ActivateBotControlPlaneResponse: tenant_id, action, success, message.
 - 404: tenant not found. 409: no active bot; bot has no webhook_secret.
 - tests: 200 success, 404, 409 (no bot), 409 (no webhook_secret), 403 non-superadmin.
+
+## 2026-03-11 — Webhook Provisioning Layer
+
+- TelegramBot: webhook_status, webhook_last_error, webhook_last_synced_at.
+- WebhookProvisioningStatus: not_configured, pending, active, failed.
+- Migration f131623d2a13 add_webhook_provisioning_fields_to_telegram_bots.
+- telegram_webhook_service.provision_telegram_webhook — real setWebhook API, updates provisioning state.
+- POST /api/v1/tenants/{tenant_id}/control-plane/provision-webhook — control-plane provisioning action.
+- ProvisionWebhookControlPlaneResponse: tenant_id, action, success, status, message, error.
+- Control-plane: webhook_status, webhook_last_error, webhook_last_synced_at in GET control-plane list/detail.
+- Readiness vs provisioning semantics normalized (tenant_readiness_service docstring).
+- Retry-safe: provision_webhook re-invokes API, overwrites state; idempotent.
+- Future-ops TODO: async job/outbox, retries with backoff, getWebhookInfo reconciliation, drift detection.
+- webhook provisioning layer closed.

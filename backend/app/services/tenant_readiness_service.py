@@ -1,14 +1,22 @@
 """
 Tenant readiness calculation — single source of truth for readiness/control-plane.
-Contract: shop_configured, services_configured, telegram_bot_registered,
-telegram_webhook_active, booking_ready.
+
+Readiness vs provisioning semantics (normalized):
+- telegram_webhook_active (readiness): tenant is ready for webhook provisioning.
+  True when: at least one active bot with non-empty webhook_secret.
+  Meaning: tenant has the prerequisites; provision-webhook can be called.
+- webhook_status=active (TelegramBot.provisioning): Telegram webhook is actually provisioned.
+  True when: setWebhook API succeeded; bot.webhook_status == "active".
+  Meaning: Telegram API has the webhook URL; real operational state.
+
+Webhook operational state: webhook_status, webhook_last_error, webhook_last_synced_at.
 """
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import exists
 
 from app.models.models import Service, Shop
-from app.models.telegram_bot import TelegramBot
+from app.models.telegram_bot import TelegramBot, WebhookProvisioningStatus
 
 
 async def compute_tenant_readiness(db: AsyncSession, tenant_id: int) -> dict:
@@ -58,4 +66,34 @@ async def compute_tenant_readiness(db: AsyncSession, tenant_id: int) -> dict:
         "telegram_bot_registered": telegram_bot_registered,
         "telegram_webhook_active": telegram_webhook_active,
         "booking_ready": booking_ready,
+    }
+
+
+async def get_webhook_operational_state(db: AsyncSession, tenant_id: int) -> dict:
+    """
+    Get webhook provisioning operational state from active bot.
+    Returns: webhook_status, webhook_last_error, webhook_last_synced_at (ISO string or None).
+    """
+    bot = (
+        await db.execute(
+            select(TelegramBot)
+            .where(
+                TelegramBot.tenant_id == tenant_id,
+                TelegramBot.is_active.is_(True),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not bot:
+        return {
+            "webhook_status": WebhookProvisioningStatus.NOT_CONFIGURED,
+            "webhook_last_error": None,
+            "webhook_last_synced_at": None,
+        }
+    return {
+        "webhook_status": bot.webhook_status or WebhookProvisioningStatus.NOT_CONFIGURED,
+        "webhook_last_error": bot.webhook_last_error,
+        "webhook_last_synced_at": (
+            bot.webhook_last_synced_at.isoformat() if bot.webhook_last_synced_at else None
+        ),
     }
