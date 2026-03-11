@@ -37,7 +37,6 @@ export function useAppointments(options?: { forKanban?: boolean }) {
         queryFn: async () => {
             const params = forKanban ? { for_kanban: "1" } : {}
             const { data } = await api.get("/appointments/", { params })
-            console.log("APPOINTMENTS RAW:", data)
             return data
         },
     })

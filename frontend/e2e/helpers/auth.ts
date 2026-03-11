@@ -10,16 +10,11 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
  * No localStorage, no token in URL/body.
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
-  page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()))
-  page.on('pageerror', err => console.log('PAGE ERROR:', err.message))
   const apiUrl = `${baseURL.replace(/\/$/, '')}/api/v1/login/access-token`
-  console.log('E2E CREDS:', { adminUser, adminPass })
   const res = await page.request.post(apiUrl, {
     form: { username: adminUser, password: adminPass },
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
-  console.log('LOGIN STATUS:', res.status())
-  console.log('LOGIN SET-COOKIE:', res.headers()['set-cookie'])
   if (res.status() !== 200) {
     throw new Error(`Login API returned ${res.status()}`)
   }
