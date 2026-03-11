@@ -1914,3 +1914,92 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Defines evolution: Vertical First → Platform Underneath → Expansion Later.
 - Documents architecture layers (Vertical / Platform / Infrastructure), forbidden strategy (Universal Booking SaaS), and long-term expansion options (Clinic, Beauty, Service Concierge, Resource Booking).
 - Purpose: preserve rationale for future architects and avoid scope drift.
+
+## 2026-03-09 — E2E Dashboard: диагностика и фикс baseURL
+
+### Root cause
+- Dashboard E2E падал: `appointments.filter is not a function`, `BODY FIRST DIV HTML: <div id="root"></div>` — React не рендерился.
+- `APPOINTMENTS RAW` возвращал HTML вместо JSON.
+- Причина: `api.ts` baseURL был `import.meta.env.BASE_URL + "api/v1"` = `/concierge/api/v1`; Vite proxy обслуживает только `/api` → запросы к `/concierge/api/v1/...` шли на index.html.
+
+### Фикс
+- `frontend/src/lib/api.ts`: `baseURL: "/api/v1"` — запросы идут в proxy и получают JSON.
+- Удалены debug-логи из `useAppointments`, `auth.ts`.
+
+### Результат
+- `dashboard.spec.ts` проходит.
+- E2E-блокер снят.
+
+## 2026-03-10 — E2E cleanup, коммиты
+
+- Удалены оставшиеся debug-логи из `loginAsAdmin` (POST-LOGIN URL, BROWSER COOKIES, PAGE BODY TEXT, DASHBOARD ROOT COUNT, BODY FIRST DIV HTML, FULL PAGE HTML).
+- Коммиты: `fix dashboard e2e api base url`, `cleanup e2e debug logs`, `remove remaining e2e debug logs`.
+
+## 2026-03-11 — Booking Concurrency Protection
+
+### DB-уровень
+- Миграция `3306616dacb3_add_appointment_overlap_protection`:
+  - `CREATE EXTENSION IF NOT EXISTS btree_gist`
+  - EXCLUDE USING gist по `shop_id`, `tstzrange(start_time, end_time, '[)')` с partial predicate `status IN ('NEW', 'CONFIRMED', 'IN_PROGRESS')` и `deleted_at IS NULL`
+  - Partial index `idx_appointments_shop_start_end_active` для overlap query.
+- Enum в PostgreSQL хранится как `NEW`/`CONFIRMED`/`IN_PROGRESS` (uppercase).
+
+### API-уровень
+- `IntegrityError` import, обработка DB conflict → HTTP 409 с сообщением «Это время уже занято. Пожалуйста выберите другой слот».
+- Lock scope расширен до `db.commit()`: убран ранний release в `finally`, release перенесён после commit.
+- Release lock в exception path: блок добавлен в начало каждого `except` (HTTPException, IntegrityError, Exception).
+- Инициализация `redis`, `lock_acquired`, `lock_key` в начале `try` для корректной работы release в except.
+
+### Архитектура защиты
+1. UI — выбор слота через available_slots.
+2. API — overlap check, Redis booking lock.
+3. DB — EXCLUDE USING gist.
+4. Exception — IntegrityError → 409, корректный release lock.
+
+### CI
+- E2E job временно отключён: `if: false` в `.github/workflows/e2e.yml` до готовности CI-инфраструктуры.
+
+### Коммиты
+- `feat: booking concurrency protection - DB EXCLUDE, lock scope, IntegrityError handler`
+
+## 2026-03-11 — SaaS Onboarding: default shop provisioning
+
+- POST /api/v1/tenants теперь создаёт дефолтный shop в той же транзакции после tenant.
+- shop.tenant_id = tenant.id, shop.name = tenant.name (или slug при пустом name).
+- Добавлен shop_id в TenantCreateResponse.
+- Новый tenant сразу пригоден для get_tenant_shop() и public booking flow.
+
+## 2026-03-11 — Tenant provisioning contract
+
+- TenantCreateResponse: добавлены onboarding_status ("ready") и is_ready_for_booking (true).
+- Явный контракт готовности tenant для SaaS-onboarding.
+
+## 2026-03-11 — Telegram bot registration endpoint
+
+- POST /api/v1/tenants/{tenant_id}/telegram-bots — регистрация бота для tenant (SUPERADMIN).
+- Request: bot_token, bot_username (optional). Response: telegram_bot_id, tenant_id, bot_username, is_active.
+
+## 2026-03-11 — Telegram webhook provisioning contract
+
+- TelegramBotRegisterResponse: добавлены webhook_url, webhook_secret_required, onboarding_status.
+- webhook_url = SITE_URL + /api/v1/webhook/{bot_username}, onboarding_status = "pending_webhook".
+
+## 2026-03-11 — Webhook contract placeholder removed
+
+- webhook_url: Optional[str]; при отсутствии bot_username — webhook_url=None, onboarding_status="bot_registered".
+
+## 2026-03-11 — Telegram activation endpoint
+
+- POST /api/v1/tenants/{tenant_id}/telegram-bots/{telegram_bot_id}/activate — вызывает setWebhook, возвращает activation_status="activated", onboarding_status="ready".
+
+## 2026-03-11 — Per-bot webhook secret field
+
+- TelegramBot.webhook_secret (String(256), nullable=True) — для SaaS-изоляции per-bot webhook secret.
+
+## 2026-03-11 — Activation switched to per-bot webhook secret
+
+- activate endpoint: генерирует secrets.token_urlsafe(32), сохраняет в bot.webhook_secret, передаёт в setWebhook.
+
+## 2026-03-11 — Webhook runtime switched to per-bot secret
+
+- webhook.py: lookup TelegramBot по bot_username, проверка против bot.webhook_secret; fallback на TELEGRAM_WEBHOOK_SECRET.

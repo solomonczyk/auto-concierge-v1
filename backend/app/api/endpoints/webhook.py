@@ -13,7 +13,7 @@ from app.core.metrics import (
 from app.bot.loader import dp
 from app.bot.bot_registry import bot_registry
 from app.db.session import async_session_local
-from app.services.telegram_bot_service import get_active_telegram_bot_token_by_username
+from app.services.telegram_bot_service import get_active_telegram_bot_by_username
 from app.core.config import settings
 
 router = APIRouter()
@@ -35,23 +35,6 @@ async def bot_webhook(
     )
     WEBHOOK_REQUESTS_TOTAL.inc()
 
-    if settings.is_production and not settings.TELEGRAM_WEBHOOK_SECRET:
-        WEBHOOK_REJECTED_TOTAL.labels(reason="no_secret").inc()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Webhook secret is not configured",
-        )
-
-    if settings.TELEGRAM_WEBHOOK_SECRET:
-        if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
-            x_telegram_bot_api_secret_token,
-            settings.TELEGRAM_WEBHOOK_SECRET,
-        ):
-            WEBHOOK_REJECTED_TOTAL.labels(reason="forbidden").inc()
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
-            )
-
     telegram_update = Update(**update)
 
     redis = RedisService.get_redis()
@@ -64,16 +47,32 @@ async def bot_webhook(
     await redis.set(key, "1", ex=86400)
 
     async with async_session_local() as db:
-        token = await get_active_telegram_bot_token_by_username(db, bot_username)
+        tg_bot = await get_active_telegram_bot_by_username(db, bot_username)
 
-    if not token:
+    if not tg_bot:
         WEBHOOK_REJECTED_TOTAL.labels(reason="unknown_bot").inc()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bot not found",
         )
 
-    bot = bot_registry.get_bot(token)
+    expected_secret = tg_bot.webhook_secret or settings.TELEGRAM_WEBHOOK_SECRET
+    if not expected_secret or not expected_secret.strip():
+        WEBHOOK_REJECTED_TOTAL.labels(reason="no_secret").inc()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook secret is not configured",
+        )
+    if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
+        x_telegram_bot_api_secret_token,
+        expected_secret,
+    ):
+        WEBHOOK_REJECTED_TOTAL.labels(reason="forbidden").inc()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
+
+    bot = bot_registry.get_bot(tg_bot.bot_token)
     await dp.feed_update(bot, telegram_update)
     WEBHOOK_PROCESSED_TOTAL.inc()
     return {"status": "ok"}

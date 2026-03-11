@@ -1,11 +1,9 @@
 """
 Tenant provisioning endpoint — SUPERADMIN only.
-POST /api/v1/tenants  — creates tenant + admin user + default settings + (optional) service catalog.
+POST /api/v1/tenants  — creates tenant + default shop + admin user + default settings + (optional) service catalog.
 """
 import logging
 import re
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -15,7 +13,7 @@ from app.api.deps import require_superadmin
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
-from app.models.models import Service, Tenant, TenantSettings, TenantStatus, User, UserRole
+from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +68,12 @@ class TenantCreateRequest(BaseModel):
 class TenantCreateResponse(BaseModel):
     tenant_id: int
     slug: str
+    shop_id: int
     dashboard_url: str
     admin_username: str
     services_seeded: int
+    onboarding_status: str
+    is_ready_for_booking: bool
 
 
 async def _seed_default_services(db: AsyncSession, tenant_id: int) -> int:
@@ -137,7 +138,17 @@ async def create_tenant(
     db.add(tenant)
     await db.flush()  # get tenant.id before using it
 
-    # --- 3. Create ADMIN user ---
+    # --- 3. Create default Shop (same transaction, required for get_tenant_shop / public booking) ---
+    default_shop_name = (payload.name or payload.slug).strip()[:100]
+    shop = Shop(
+        tenant_id=tenant.id,
+        name=default_shop_name or payload.slug,
+        address=None,
+    )
+    db.add(shop)
+    await db.flush()  # get shop.id for response
+
+    # --- 4. Create ADMIN user ---
     admin_user = User(
         tenant_id=tenant.id,
         username=payload.admin_username,
@@ -147,7 +158,7 @@ async def create_tenant(
     )
     db.add(admin_user)
 
-    # --- 4. Create default TenantSettings ---
+    # --- 5. Create default TenantSettings ---
     tenant_settings = TenantSettings(
         tenant_id=tenant.id,
         work_start=9,
@@ -157,7 +168,7 @@ async def create_tenant(
     )
     db.add(tenant_settings)
 
-    # --- 5. Seed default service catalog ---
+    # --- 6. Seed default service catalog ---
     services_seeded = 0
     if payload.seed_services:
         services_seeded = await _seed_default_services(db, tenant.id)
@@ -167,9 +178,10 @@ async def create_tenant(
     dashboard_url = f"{settings.SITE_URL}/concierge/{payload.slug}"
 
     logger.info(
-        "[Provisioning] Tenant created: id=%s slug=%s admin=%s services=%s",
+        "[Provisioning] Tenant created: id=%s slug=%s shop_id=%s admin=%s services=%s",
         tenant.id,
         payload.slug,
+        shop.id,
         payload.admin_username,
         services_seeded,
     )
@@ -177,7 +189,10 @@ async def create_tenant(
     return TenantCreateResponse(
         tenant_id=tenant.id,
         slug=payload.slug,
+        shop_id=shop.id,
         dashboard_url=dashboard_url,
         admin_username=payload.admin_username,
         services_seeded=services_seeded,
+        onboarding_status="ready",
+        is_ready_for_booking=True,
     )

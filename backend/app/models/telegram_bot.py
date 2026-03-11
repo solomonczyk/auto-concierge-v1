@@ -17,6 +17,7 @@ class TelegramBot(Base):
 
     bot_token = Column(String, nullable=False, unique=True)
     bot_username = Column(String, nullable=True)
+    webhook_secret = Column(String(256), nullable=True)
 
     is_active = Column(Boolean, default=True, nullable=False)
 
