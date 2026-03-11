@@ -244,6 +244,7 @@ export default function BookingPage() {
     const [selectedTime, setSelectedTime] = useState<string>('');
     const [slotsLoading, setSlotsLoading] = useState(false);
     const [slotsError, setSlotsError] = useState<string | null>(null);
+    const [slotsRefreshKey, setSlotsRefreshKey] = useState(0);
     const [showCalendar, setShowCalendar] = useState(false);
     const [bookingResult, setBookingResult] = useState<any | null>(null);
 
@@ -379,7 +380,9 @@ export default function BookingPage() {
                 if (requestId !== slotsRequestIdRef.current) return;
                 setSlotsLoading(false);
             });
-    }, [selectedService, selectedDate, apiBase]);
+    }, [selectedService, selectedDate, apiBase, slotsRefreshKey]);
+
+    const loadSlots = () => setSlotsRefreshKey(k => k + 1);
 
     const handleSubmit = async (isWaitlist: boolean = false) => {
         if (submitLoading) return;
@@ -429,7 +432,12 @@ export default function BookingPage() {
         } catch (err: any) {
             console.error("Booking failed", err);
             const errorMsg = err.response?.data?.detail || "Произошла ошибка при бронировании";
-            setSubmitError(errorMsg);
+            if (err.response?.status === 409) {
+                loadSlots();
+                setSubmitError("Этот слот только что заняли. Пожалуйста, выберите другой.");
+            } else {
+                setSubmitError(errorMsg);
+            }
             tg?.MainButton.hideProgress();
         } finally {
             setSubmitLoading(false);
@@ -585,30 +593,10 @@ export default function BookingPage() {
                                 </Button>
                             </div>
                         </div>
-                    ) : availableSlots.length > 0 ? (
-                        <div className="grid grid-cols-4 gap-2">
-                            {availableSlots.map((slot) => {
-                                const isSelected = selectedTime === slot;
-                                const timeLabel = format(new Date(slot), 'HH:mm');
-                                return (
-                                    <button
-                                        key={slot}
-                                        onClick={() => { setSelectedTime(slot); setSubmitError(null); }}
-                                        className={`h-10 rounded-lg flex items-center justify-center text-sm font-medium transition-all ${isSelected
-                                            ? 'bg-primary text-primary-foreground shadow-md'
-                                            : 'bg-accent/40 hover:bg-accent'
-                                            }`}
-                                    >
-                                        {timeLabel}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="text-center py-6 bg-accent/10 rounded-xl border border-dashed border-accent space-y-3">
-                            <p className="text-muted-foreground text-sm">Нет свободных слотов на эту дату</p>
-                            <p className="text-muted-foreground text-xs">Выберите другую дату выше или оставьте заявку в лист ожидания</p>
-                            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    ) : !slotsLoading && availableSlots.length === 0 ? (
+                        <div style={{ marginTop: 16 }}>
+                            <p className="text-muted-foreground text-sm">Свободных слотов на выбранную дату нет</p>
+                            <div className="flex flex-col sm:flex-row gap-2 justify-center mt-4">
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -628,6 +616,25 @@ export default function BookingPage() {
                                     ЛИСТ ОЖИДАНИЯ
                                 </Button>
                             </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-4 gap-2">
+                            {availableSlots.map((slot) => {
+                                const isSelected = selectedTime === slot;
+                                const timeLabel = format(new Date(slot), 'HH:mm');
+                                return (
+                                    <button
+                                        key={slot}
+                                        onClick={() => { setSelectedTime(slot); setSubmitError(null); }}
+                                        className={`h-10 rounded-lg flex items-center justify-center text-sm font-medium transition-all ${isSelected
+                                            ? 'bg-primary text-primary-foreground shadow-md'
+                                            : 'bg-accent/40 hover:bg-accent'
+                                            }`}
+                                    >
+                                        {timeLabel}
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
 
