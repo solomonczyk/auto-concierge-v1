@@ -10,24 +10,38 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173'
  * No localStorage, no token in URL/body.
  */
 export async function loginAsAdmin(page: Page): Promise<void> {
-  const apiUrl = `${baseURL.replace(/\/$/, '')}/concierge/api/v1/login/access-token`
+  page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()))
+  page.on('pageerror', err => console.log('PAGE ERROR:', err.message))
+  const apiUrl = `${baseURL.replace(/\/$/, '')}/api/v1/login/access-token`
+  console.log('E2E CREDS:', { adminUser, adminPass })
   const res = await page.request.post(apiUrl, {
     form: { username: adminUser, password: adminPass },
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
+  console.log('LOGIN STATUS:', res.status())
+  console.log('LOGIN SET-COOKIE:', res.headers()['set-cookie'])
   if (res.status() !== 200) {
     throw new Error(`Login API returned ${res.status()}`)
   }
   // Backend sets Set-Cookie; request context stores it for same-origin
-  await page.goto('/concierge/')
-  await expect(page.getByTestId('dashboard-root')).toBeVisible({ timeout: 15000 })
+  await page.goto('/concierge/', { waitUntil: 'networkidle' })
+  console.log('POST-LOGIN URL:', page.url())
+  console.log('BROWSER COOKIES:', await page.context().cookies())
+  console.log('PAGE BODY TEXT:', await page.locator('body').innerText())
+  console.log('DASHBOARD ROOT COUNT:', await page.locator('[data-testid="dashboard-root"]').count())
+  console.log('BODY FIRST DIV HTML:', await page.locator('body > div').first().evaluate(el => el.outerHTML))
+  console.log('FULL PAGE HTML:', await page.content())
+  await page.waitForSelector('[data-testid="dashboard-root"]', { state: 'visible', timeout: 15000 })
 }
 
 /**
  * UI-based login — only for auth-ui smoke test.
  */
 export async function loginAsAdminViaUI(page: Page): Promise<void> {
+  page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()))
   await page.goto('/concierge/login')
+  console.log('E2E URL:', page.url())
+  await expect(page.getByRole('heading', { name: /вход/i })).toBeVisible()
   await page.getByPlaceholder(/например: admin/i).fill(adminUser)
   await page.getByPlaceholder(/ваш пароль/i).fill(adminPass)
   await page.getByRole('button', { name: /войти/i }).click()

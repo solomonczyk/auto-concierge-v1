@@ -11,9 +11,11 @@ export interface Appointment {
     status: "new" | "confirmed" | "in_progress" | "completed" | "cancelled" | "no_show" | "waitlist";
     completed_at?: string | null;
     notes?: string;
-    car_make?: string;
-    car_year?: number;
-    vin?: string;
+    auto_info?: {
+        car_make?: string;
+        car_year?: number;
+        vin?: string;
+    };
     client?: {
         id: number;
         full_name: string;
@@ -34,7 +36,8 @@ export function useAppointments(options?: { forKanban?: boolean }) {
         queryKey: ["appointments", forKanban ? "kanban" : "all"],
         queryFn: async () => {
             const params = forKanban ? { for_kanban: "1" } : {}
-            const { data } = await api.get<Appointment[]>("/appointments/", { params })
+            const { data } = await api.get("/appointments/", { params })
+            console.log("APPOINTMENTS RAW:", data)
             return data
         },
     })
