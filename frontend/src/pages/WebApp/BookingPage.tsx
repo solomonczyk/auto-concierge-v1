@@ -247,9 +247,11 @@ export default function BookingPage() {
     const [slotsRefreshKey, setSlotsRefreshKey] = useState(0);
     const [showCalendar, setShowCalendar] = useState(false);
     const [bookingResult, setBookingResult] = useState<any | null>(null);
+    const [bookingSuccess, setBookingSuccess] = useState(false);
 
     const slotsRequestIdRef = useRef(0);
     const mainButtonHandlerRef = useRef<(() => void) | null>(null);
+    const selectedSlotRef = useRef<HTMLButtonElement | null>(null);
 
     // Auto-scroll horizontal dates list when selectedDate changes when selectedDate changes
     useEffect(() => {
@@ -259,6 +261,15 @@ export default function BookingPage() {
             element.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
     }, [selectedDate]);
+
+    useEffect(() => {
+        if (selectedSlotRef.current) {
+            selectedSlotRef.current.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+            });
+        }
+    }, [selectedTime]);
 
     const urlParams = new URLSearchParams(window.location.search);
     const appointmentId = urlParams.get('appointment_id');
@@ -425,6 +436,7 @@ export default function BookingPage() {
             const response = await api.post(`${apiBase}/appointments/public`, data);
             console.log("Booking response:", response.data);
 
+            setBookingSuccess(true);
             setBookingResult(response.data);
             setStep('success');
             tg?.MainButton?.hide();
@@ -447,7 +459,7 @@ export default function BookingPage() {
     useEffect(() => {
         if (!tg?.MainButton) return;
 
-        if (selectedService && selectedTime) {
+        if (selectedService && selectedTime && !bookingSuccess) {
             if (mainButtonHandlerRef.current) {
                 tg.MainButton.offClick(mainButtonHandlerRef.current);
             }
@@ -465,11 +477,34 @@ export default function BookingPage() {
         } else {
             tg.MainButton.hide();
         }
-    }, [selectedService, selectedTime, mode, carMake, carYear, vin]);
+    }, [selectedService, selectedTime, mode, carMake, carYear, vin, bookingSuccess]);
+
+    useEffect(() => {
+        if (!tg) return;
+
+        if (bookingSuccess) {
+            tg.MainButton.setText("ЗАКРЫТЬ");
+            tg.MainButton.show();
+            const closeHandler = () => tg.close();
+            tg.MainButton.onClick(closeHandler);
+            return () => tg.MainButton.offClick(closeHandler);
+        }
+    }, [bookingSuccess]);
 
     const handleClose = () => {
         tg?.close();
     };
+
+    if (bookingSuccess && bookingResult) {
+        return (
+            <div style={{ padding: 24, textAlign: "center" }}>
+                <h2>Запись подтверждена</h2>
+                <p>
+                    {bookingResult.start_time ? format(new Date(bookingResult.start_time), "dd.MM.yyyy HH:mm") : "—"}
+                </p>
+            </div>
+        );
+    }
 
     // --- Car info step ---
     if (selectedService && step === 'car') {
@@ -624,6 +659,7 @@ export default function BookingPage() {
                                 const timeLabel = format(new Date(slot), 'HH:mm');
                                 return (
                                     <button
+                                        ref={isSelected ? selectedSlotRef : null}
                                         key={slot}
                                         onClick={() => { setSelectedTime(slot); setSubmitError(null); }}
                                         className={`h-10 rounded-lg flex items-center justify-center text-sm font-medium transition-all ${isSelected
