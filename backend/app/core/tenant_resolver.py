@@ -1,10 +1,11 @@
 from fastapi import HTTPException, Path, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.context import tenant_id_context
 from app.db.session import get_db
 from app.models.models import Tenant
-from app.core.context import tenant_id_context
+from app.services.tenant_lifecycle_guard import ensure_tenant_operational
 
 
 async def get_tenant_id_by_slug(
@@ -15,5 +16,7 @@ async def get_tenant_id_by_slug(
     tenant = result.scalar_one_or_none()
     if not tenant:
         raise HTTPException(status_code=404, detail=f"Автосервис '{slug}' не найден")
+    # Lifecycle guard: block SUSPENDED/DISABLED/DELETED/PENDING tenants for public booking
+    await ensure_tenant_operational(db, tenant.id)
     tenant_id_context.set(tenant.id)
     return tenant.id

@@ -18,9 +18,12 @@ class AppointmentStatus(str, Enum):
     WAITLIST = "waitlist"
 
 class TenantStatus(str, Enum):
+    """Tenant lifecycle status. Operational: ACTIVE, TRIAL. Blocked: SUSPENDED, DISABLED, DELETED, PENDING."""
+
     ACTIVE = "active"
     TRIAL = "trial"
     SUSPENDED = "suspended"
+    DISABLED = "disabled"
     DELETED = "deleted"
     PENDING = "pending"
 
@@ -67,7 +70,9 @@ class Tenant(Base):
     tariff_plan_id: Mapped[int] = mapped_column(ForeignKey("tariff_plans.id"), nullable=True)
     tariff_plan: Mapped["TariffPlan"] = relationship("TariffPlan", back_populates="tenants")
     
-    status: Mapped[TenantStatus] = mapped_column(SQLEnum(TenantStatus), default=TenantStatus.ACTIVE)
+    status: Mapped[TenantStatus] = mapped_column(
+        SQLEnum(TenantStatus), nullable=False, default=TenantStatus.ACTIVE
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     users: Mapped[List["User"]] = relationship("User", back_populates="tenant")
@@ -173,6 +178,12 @@ class Appointment(Base):
         back_populates="appointment",
         uselist=False,
         lazy="selectin",
+    )
+    intake = relationship(
+        "AppointmentIntake",
+        uselist=False,
+        backref="appointment",
+        cascade="all, delete-orphan",
     )
 
 

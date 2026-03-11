@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-03-11 — Tenant Lifecycle / Billing Control Layer
+
+Реализован слой Tenant Lifecycle / Billing Control:
+
+- **Step 1:** `TenantStatus` enum расширен значением `DISABLED`; поле `status` в модели Tenant (nullable=False, default=ACTIVE). Файл: `backend/app/models/models.py`.
+- **Step 2:** Alembic migration `a7b8c9d0e1f2_add_tenant_status_disabled` — добавлено значение `disabled` в enum tenantstatus.
+- **Step 3:** Pydantic-схемы `TenantStatusRead`, `TenantStatusUpdate`, `TenantLifecycleResponse` в `backend/app/schemas/tenant_lifecycle.py`.
+- **Step 4:** Admin endpoint `PATCH /api/v1/tenants/{tenant_id}/status` — смена статуса tenant (SUPERADMIN only).
+- **Step 5:** `ensure_tenant_operational` / `check_tenant_operational_status` в `backend/app/services/tenant_lifecycle_guard.py`.
+- **Step 6:** Guard в `get_tenant_id_by_slug` — публичный booking (services, slots, appointments) блокируется для SUSPENDED/DISABLED tenant (403).
+- **Step 7:** `get_current_tenant_id` в deps.py использует guard — dashboard/API tenant-scoped endpoints возвращают 403 для неоперационных tenant.
+- **Step 8:** Webhook endpoint проверяет tenant status; 403 + `WEBHOOK_REJECTED_TOTAL.labels(reason="tenant_inactive")` для suspended/disabled.
+- **Step 9:** Readiness расширен полями `tenant_status`, `tenant_operational` в `compute_tenant_readiness` и `TenantReadinessFlags`.
+- **Step 10:** Billing gate `check_billing_ok` в `backend/app/services/billing_gate.py` — tenant + tariff + operational.
+- **Step 11:** `GET /api/v1/tenants/{tenant_id}/lifecycle` — единый endpoint состояния tenant (status, operational, billing_ok, readiness_ok).
+- **Step 12:** Тесты в `tests/test_tenant_lifecycle.py` и `tests/test_tenant_control_plane.py` — все сценарии покрыты.
+
+Conftest: добавлен патч `app.api.endpoints.webhook.async_session_local` для корректной работы webhook-тестов с test DB.
+
 ## 2026-03-02
 - Investigated recurring 404 errors for `https://bt-aistudio.ru/media/posters/*.webp` after deployments
 - Identified root cause in `studio-ai-site.nginx`: media alias pointed to release directory `dist/client/media`, which is overwritten during deploys

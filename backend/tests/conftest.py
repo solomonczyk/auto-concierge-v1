@@ -103,6 +103,10 @@ _ws_auth_mod.async_session_local = test_async_session
 import app.db.session as _db_session_mod
 _db_session_mod.async_session_local = test_async_session
 
+# Webhook endpoint creates its own session — must use test DB
+import app.api.endpoints.webhook as _webhook_mod
+_webhook_mod.async_session_local = test_async_session
+
 # Reminder service imports async_session_local before conftest patch — override explicitly
 import app.services.reminder_service as _reminder_service_mod
 _reminder_service_mod.async_session_local = test_async_session

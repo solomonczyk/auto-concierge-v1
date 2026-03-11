@@ -19,7 +19,9 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
+from app.schemas.tenant_lifecycle import TenantLifecycleResponse, TenantStatusRead, TenantStatusUpdate
 from app.models.telegram_bot import TelegramBot
+from app.services.billing_gate import check_billing_ok
 from app.services.tenant_readiness_service import compute_tenant_readiness, get_webhook_operational_state
 from app.services.telegram_webhook_service import provision_telegram_webhook
 
@@ -92,6 +94,8 @@ class TenantReadinessFlags(BaseModel):
     telegram_bot_registered: bool
     telegram_webhook_active: bool
     booking_ready: bool
+    tenant_status: str
+    tenant_operational: bool
 
 
 class TenantReadinessResponse(TenantReadinessFlags):
@@ -303,6 +307,52 @@ async def get_tenant_control_plane_detail(
         is_active=tenant.status == TenantStatus.ACTIVE,
         **flags,
         **webhook_state,
+    )
+
+
+@router.patch(
+    "/{tenant_id}/status",
+    response_model=TenantStatusRead,
+    summary="Update tenant lifecycle status (SUPERADMIN only)",
+)
+async def update_tenant_status(
+    tenant_id: int,
+    payload: TenantStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantStatusRead:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    tenant.status = payload.status
+    await db.commit()
+    await db.refresh(tenant)
+    return TenantStatusRead(tenant_id=tenant.id, status=tenant.status.value)
+
+
+@router.get(
+    "/{tenant_id}/lifecycle",
+    response_model=TenantLifecycleResponse,
+    summary="Get tenant lifecycle summary (SUPERADMIN only)",
+)
+async def get_tenant_lifecycle(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantLifecycleResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    flags = await compute_tenant_readiness(db, tenant_id)
+    operational = flags.get("tenant_operational", False)
+    billing_ok = await check_billing_ok(db, tenant_id)
+    readiness_ok = flags.get("booking_ready", False) and operational
+    return TenantLifecycleResponse(
+        tenant_id=tenant.id,
+        status=tenant.status.value,
+        operational=operational,
+        billing_ok=billing_ok,
+        readiness_ok=readiness_ok,
     )
 
 

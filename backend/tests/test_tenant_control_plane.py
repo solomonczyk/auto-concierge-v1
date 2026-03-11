@@ -103,6 +103,8 @@ async def test_readiness_empty_tenant(
     assert data["telegram_bot_registered"] is False
     assert data["telegram_webhook_active"] is False
     assert data["booking_ready"] is False
+    assert "tenant_status" in data
+    assert "tenant_operational" in data
 
 
 @pytest.mark.asyncio
@@ -131,6 +133,8 @@ async def test_readiness_fully_configured_tenant(
     assert data["telegram_bot_registered"] is True
     assert data["telegram_webhook_active"] is True
     assert data["booking_ready"] is True
+    assert "tenant_status" in data
+    assert "tenant_operational" in data
 
 
 # --- Activate-bot control-plane action ---

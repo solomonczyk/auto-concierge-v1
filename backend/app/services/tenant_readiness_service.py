@@ -15,16 +15,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import exists
 
-from app.models.models import Service, Shop
+from app.models.models import Service, Shop, Tenant
 from app.models.telegram_bot import TelegramBot, WebhookProvisioningStatus
+from app.services.tenant_lifecycle_guard import check_tenant_operational_status
 
 
 async def compute_tenant_readiness(db: AsyncSession, tenant_id: int) -> dict:
     """
     Compute readiness flags for a tenant.
     Returns dict: shop_configured, services_configured, telegram_bot_registered,
-    telegram_webhook_active, booking_ready.
+    telegram_webhook_active, booking_ready, tenant_status, tenant_operational.
     """
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    tenant_status = tenant.status.value if tenant else "unknown"
+    tenant_operational = False
+    if tenant:
+        operational, _ = await check_tenant_operational_status(db, tenant_id)
+        tenant_operational = operational
+
     shop = (await db.execute(select(Shop).where(Shop.tenant_id == tenant_id).limit(1))).scalar_one_or_none()
     service = (await db.execute(select(Service).where(Service.tenant_id == tenant_id).limit(1))).scalar_one_or_none()
 
@@ -66,6 +74,8 @@ async def compute_tenant_readiness(db: AsyncSession, tenant_id: int) -> dict:
         "telegram_bot_registered": telegram_bot_registered,
         "telegram_webhook_active": telegram_webhook_active,
         "booking_ready": booking_ready,
+        "tenant_status": tenant_status,
+        "tenant_operational": tenant_operational,
     }
 
 

@@ -7,7 +7,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.models import User, Tenant, TenantStatus
+from app.models.models import User, Tenant
+from app.services.tenant_lifecycle_guard import check_tenant_operational_status
 
 AUTH_COOKIE_NAME = "access_token"
 
@@ -105,15 +106,12 @@ async def get_current_tenant_id(
             detail="Not authenticated and no tenant context",
         )
 
-    stmt = select(Tenant).where(Tenant.id == tenant_id)
-    result = await db.execute(stmt)
-    tenant = result.scalar_one_or_none()
-    if tenant and tenant.status == TenantStatus.SUSPENDED:
+    operational, _ = await check_tenant_operational_status(db, tenant_id)
+    if not operational:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant account is suspended",
+            detail="Tenant account is suspended or disabled",
         )
-
     return tenant_id
 
 
