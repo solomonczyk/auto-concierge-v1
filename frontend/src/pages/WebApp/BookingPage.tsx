@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -217,18 +217,12 @@ function CarInfoStep({
 }
 
 export default function BookingPage() {
-    // Resolve slug from react-router params (/:slug or /concierge/:slug)
-    // Fallback: for /concierge/demo-service or /concierge/demo-service/webapp → slug = demo-service
-    const { slug: routeSlug } = useParams<{ slug?: string }>()
-    const pathSegments = window.location.pathname.split('/').filter(Boolean)
-    const slugFallback = pathSegments[0] === 'concierge' ? pathSegments[1] : pathSegments[0]
-    const slug = routeSlug ?? slugFallback ?? ''
-    // axios baseURL is /concierge/api/v1 — path must NOT start with / or axios treats it as root-absolute
-    // Final request: /concierge/api/v1/{slug}/services/public → nginx → backend /api/v1/{slug}/...
-    const apiBase = slug ? `${slug}` : ''
+    const { slug = '' } = useParams<{ slug?: string }>()
+    const apiBase = slug
 
     const [services, setServices] = useState<Service[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [initialLoading, setInitialLoading] = useState(true);
+    const [submitLoading, setSubmitLoading] = useState(false);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
     // Step: 'service' | 'car' | 'datetime' | 'success'
     const [step, setStep] = useState<'service' | 'car' | 'datetime' | 'success'>('service');
@@ -248,9 +242,14 @@ export default function BookingPage() {
     const [availableSlots, setAvailableSlots] = useState<string[]>([]);
     const [selectedTime, setSelectedTime] = useState<string>('');
     const [slotsLoading, setSlotsLoading] = useState(false);
+    const [slotsError, setSlotsError] = useState<string | null>(null);
     const [showCalendar, setShowCalendar] = useState(false);
+    const [bookingResult, setBookingResult] = useState<any | null>(null);
 
-    // Auto-scroll horizontal dates list when selectedDate changes
+    const slotsRequestIdRef = useRef(0);
+    const mainButtonHandlerRef = useRef<(() => void) | null>(null);
+
+    // Auto-scroll horizontal dates list when selectedDate changes when selectedDate changes
     useEffect(() => {
         const dateId = `date-${format(selectedDate, 'yyyy-MM-dd')}`;
         const element = document.getElementById(dateId);
@@ -259,10 +258,9 @@ export default function BookingPage() {
         }
     }, [selectedDate]);
 
-    // Detect if we are in edit mode
     const urlParams = new URLSearchParams(window.location.search);
     const appointmentId = urlParams.get('appointment_id');
-    const isEditMode = !!appointmentId;
+    const mode: 'create' | 'reschedule' = appointmentId ? 'reschedule' : 'create';
 
     const tg = window.Telegram?.WebApp;
 
@@ -275,7 +273,7 @@ export default function BookingPage() {
         tg?.setBackgroundColor('#0a1628');   // --background
 
         tg?.MainButton.setParams({
-            text: isEditMode ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ',
+            text: mode === 'reschedule' ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ',
             color: '#3b82f6',                // --primary (electric blue)
             text_color: '#0f172a',           // --primary-foreground (dark)
         });
@@ -292,10 +290,10 @@ export default function BookingPage() {
                     try {
                         const clientRes = await api.get(`${apiBase}/clients/public?telegram_id=${telegramId}`)
                         const clientData = clientRes.data
-                        if (clientData?.car_make) {
-                            setCarMake(clientData.car_make)
-                            setCarYear(clientData.car_year ? String(clientData.car_year) : '')
-                            setVin(clientData.vin || '')
+                        if (clientData?.auto_info?.car_make) {
+                            setCarMake(clientData.auto_info.car_make)
+                            setCarYear(clientData.auto_info?.car_year ? String(clientData.auto_info.car_year) : '')
+                            setVin(clientData.auto_info?.vin || '')
                             isReturningClient = true
                             setReturningClient(true)
                         }
@@ -333,37 +331,54 @@ export default function BookingPage() {
             } catch (err) {
                 console.error("Failed to fetch data", err);
             } finally {
-                setLoading(false);
+                setInitialLoading(false);
             }
         };
 
         fetchData();
-    }, [isEditMode, appointmentId]);
+    }, [appointmentId]);
 
 
-    // Next 30 days range computed inline where needed
-
-    // Fetch slots when service or date changes
+    // Fetch slots when service or date changes — request identity prevents stale responses
     useEffect(() => {
-        if (selectedService && selectedDate) {
-            setSlotsLoading(true);
+        if (!selectedService || !selectedDate) {
+            setAvailableSlots([]);
             setSelectedTime('');
-            const dateStr = format(selectedDate, 'yyyy-MM-dd');
-
-            api.get(`${apiBase}/slots/public`, {
-                params: {
-                    service_duration: selectedService.duration_minutes,
-                    target_date: dateStr
-                }
-            })
-                .then(res => setAvailableSlots(res.data))
-                .catch(err => {
-                    console.error("Failed to fetch slots", err);
-                    setAvailableSlots([]);
-                })
-                .finally(() => setSlotsLoading(false));
+            setSlotsLoading(false);
+            setSlotsError(null);
+            return;
         }
-    }, [selectedService, selectedDate]);
+
+        const requestId = ++slotsRequestIdRef.current;
+        setSlotsLoading(true);
+        setSlotsError(null);
+        setSelectedTime('');
+        setAvailableSlots([]);
+
+        const dateStr = format(selectedDate, 'yyyy-MM-dd');
+
+        api.get(`${apiBase}/slots/public`, {
+            params: {
+                service_duration: selectedService.duration_minutes,
+                target_date: dateStr
+            }
+        })
+            .then(res => {
+                if (requestId !== slotsRequestIdRef.current) return;
+                setAvailableSlots(res.data ?? []);
+                setSlotsError(null);
+            })
+            .catch(err => {
+                if (requestId !== slotsRequestIdRef.current) return;
+                console.error("Failed to fetch slots", err);
+                setAvailableSlots([]);
+                setSlotsError(err.response?.data?.detail ?? "Не удалось загрузить слоты");
+            })
+            .finally(() => {
+                if (requestId !== slotsRequestIdRef.current) return;
+                setSlotsLoading(false);
+            });
+    }, [selectedService, selectedDate, apiBase]);
 
     const handleSubmit = async (isWaitlist: boolean = false) => {
         console.log("handleSubmit called", { isWaitlist, selectedService, selectedTime });
@@ -382,26 +397,29 @@ export default function BookingPage() {
         const userTimezone = Intl.DateTimeFormat?.().resolvedOptions?.()?.timeZone ?? undefined;
         const data = {
             service_id: selectedService.id,
-            date: isWaitlist ? format(selectedDate, 'yyyy-MM-dd') : selectedTime,
+            target_date: format(selectedDate, 'yyyy-MM-dd'),
+            slot_start: isWaitlist ? null : selectedTime,
             appointment_id: appointmentId ? parseInt(appointmentId) : null,
             is_waitlist: isWaitlist,
             telegram_id: telegramId,
             full_name: fullName,
             timezone: userTimezone,
-            // Vehicle info
-            car_make: carMake.trim() || null,
-            car_year: carYear ? parseInt(carYear) : null,
-            vin: vin.trim() || null,
+            auto_info: {
+                car_make: carMake.trim() || null,
+                car_year: carYear ? parseInt(carYear) : null,
+                vin: vin.trim() || null,
+            },
         };
 
         console.log("Submitting booking data:", data);
         try {
-            setLoading(true);
+            setSubmitLoading(true);
             tg?.MainButton?.showProgress();
 
             const response = await api.post(`${apiBase}/appointments/public`, data);
             console.log("Booking response:", response.data);
 
+            setBookingResult(response.data);
             setStep('success');
             tg?.MainButton?.hide();
             tg?.HapticFeedback?.notificationOccurred('success');
@@ -411,32 +429,32 @@ export default function BookingPage() {
             alert(errorMsg);
             tg?.MainButton.hideProgress();
         } finally {
-            setLoading(false);
+            setSubmitLoading(false);
         }
     };
 
     useEffect(() => {
         if (!tg?.MainButton) return;
 
-        const handleMainClick = () => {
-            console.log("MainButton clicked. Current state:", { carMake, carYear, vin });
-            handleSubmit(false);
-        };
-
         if (selectedService && selectedTime) {
-            console.log("Updating MainButton params and listener");
-            tg.MainButton.setText(isEditMode ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ');
+            if (mainButtonHandlerRef.current) {
+                tg.MainButton.offClick(mainButtonHandlerRef.current);
+            }
+            const handler = () => handleSubmit(false);
+            mainButtonHandlerRef.current = handler;
+            tg.MainButton.setText(mode === 'reschedule' ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ');
             tg.MainButton.show();
-            tg.MainButton.offClick(handleMainClick); // Avoid duplicates if possible
-            tg.MainButton.onClick(handleMainClick);
+            tg.MainButton.onClick(handler);
 
             return () => {
-                tg.MainButton.offClick(handleMainClick);
+                if (mainButtonHandlerRef.current) {
+                    tg.MainButton.offClick(mainButtonHandlerRef.current);
+                }
             };
         } else {
             tg.MainButton.hide();
         }
-    }, [selectedService, selectedTime, isEditMode, carMake, carYear, vin]);
+    }, [selectedService, selectedTime, mode, carMake, carYear, vin]);
 
     const handleClose = () => {
         tg?.close();
@@ -539,6 +557,31 @@ export default function BookingPage() {
                                 <div key={i} className="h-10 bg-accent/20 animate-pulse rounded-lg" />
                             ))}
                         </div>
+                    ) : slotsError ? (
+                        <div className="text-center py-6 bg-destructive/10 rounded-xl border border-destructive/30 space-y-3">
+                            <p className="text-destructive text-sm font-medium">{slotsError}</p>
+                            <p className="text-muted-foreground text-xs">Попробуйте выбрать другую дату</p>
+                            <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={submitLoading}
+                                    className="font-bold border-primary text-primary hover:bg-primary/10"
+                                    onClick={() => setShowCalendar(true)}
+                                >
+                                    ВЫБРАТЬ ДРУГУЮ ДАТУ
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={submitLoading}
+                                    className="font-bold border-primary text-primary hover:bg-primary/10"
+                                    onClick={() => handleSubmit(true)}
+                                >
+                                    ЛИСТ ОЖИДАНИЯ
+                                </Button>
+                            </div>
+                        </div>
                     ) : availableSlots.length > 0 ? (
                         <div className="grid grid-cols-4 gap-2">
                             {availableSlots.map((slot) => {
@@ -566,6 +609,7 @@ export default function BookingPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
+                                    disabled={submitLoading}
                                     className="font-bold border-primary text-primary hover:bg-primary/10"
                                     onClick={() => setShowCalendar(true)}
                                 >
@@ -574,6 +618,7 @@ export default function BookingPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
+                                    disabled={submitLoading}
                                     className="font-bold border-primary text-primary hover:bg-primary/10"
                                     onClick={() => handleSubmit(true)}
                                 >
@@ -591,9 +636,10 @@ export default function BookingPage() {
                             <Button
                                 data-testid="submit-booking"
                                 className="w-full h-14 text-lg font-bold"
+                                disabled={submitLoading}
                                 onClick={() => handleSubmit(false)}
                             >
-                                {isEditMode ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ'}
+                                {mode === 'reschedule' ? '✏️ ПЕРЕНЕСТИ ЗАПИСЬ' : '✅ ПОДТВЕРДИТЬ'}
                             </Button>
                         </div>
                     )}
@@ -612,23 +658,27 @@ export default function BookingPage() {
                 </div>
 
                 <div className="space-y-2">
-                    <h1 className="text-3xl font-black tracking-tight">ЗАПИСЬ СОЗДАНА!</h1>
-                    <p className="text-muted-foreground">Вы успешно записались на сервис</p>
+                    <h1 className="text-3xl font-black tracking-tight">{mode === 'reschedule' ? 'ЗАПИСЬ ПЕРЕНЕСЕНА!' : 'ЗАПИСЬ СОЗДАНА!'}</h1>
+                    <p className="text-muted-foreground">{mode === 'reschedule' ? 'Дата и время записи обновлены' : 'Вы успешно записались на сервис'}</p>
                 </div>
 
                 <div className="w-full bg-accent/30 p-6 rounded-3xl border border-border space-y-4">
                     <div className="flex justify-between items-center text-left">
                         <span className="text-xs font-bold uppercase opacity-40">Услуга</span>
-                        <span className="font-bold text-lg">{selectedService.name}</span>
+                        <span className="font-bold text-lg">{bookingResult?.service_name ?? selectedService?.name}</span>
                     </div>
                     <div className="w-full h-px bg-border" />
                     <div className="flex justify-between items-center text-left">
                         <span className="text-xs font-bold uppercase opacity-40">Дата и время</span>
                         <span className="font-bold">
-                            {format(selectedDate, 'd MMMM yyyy', { locale: ru })}
-                            {selectedTime && ` в ${format(new Date(selectedTime), 'HH:mm')}`}
+                            {bookingResult?.start_time
+                                ? format(new Date(bookingResult.start_time), 'd MMMM yyyy в HH:mm', { locale: ru })
+                                : `${format(selectedDate, 'd MMMM yyyy', { locale: ru })}${selectedTime ? ` в ${format(new Date(selectedTime), 'HH:mm')}` : ''}`}
                         </span>
                     </div>
+                    {bookingResult?.is_waitlist && (
+                        <p className="text-xs text-primary font-medium">Добавлено в лист ожидания</p>
+                    )}
                 </div>
 
                 <div className="w-full pt-8">
@@ -677,7 +727,7 @@ export default function BookingPage() {
                 ))}
             </div>
 
-            {loading && (
+            {initialLoading && (
                 <div className="space-y-4 pt-4">
                     {[1, 2, 3].map(i => (
                         <div key={i} className="h-24 bg-accent/20 animate-pulse rounded-xl" />
@@ -685,7 +735,7 @@ export default function BookingPage() {
                 </div>
             )}
 
-            {!loading && services.length === 0 && (
+            {!initialLoading && services.length === 0 && (
                 <div className="text-center py-20 opacity-50">
                     Услуги не найдены.
                 </div>
