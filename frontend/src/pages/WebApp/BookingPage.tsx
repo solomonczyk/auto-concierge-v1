@@ -223,6 +223,7 @@ export default function BookingPage() {
     const [services, setServices] = useState<Service[]>([]);
     const [initialLoading, setInitialLoading] = useState(true);
     const [submitLoading, setSubmitLoading] = useState(false);
+    const [submitError, setSubmitError] = useState<string | null>(null);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
     // Step: 'service' | 'car' | 'datetime' | 'success'
     const [step, setStep] = useState<'service' | 'car' | 'datetime' | 'success'>('service');
@@ -381,6 +382,7 @@ export default function BookingPage() {
     }, [selectedService, selectedDate, apiBase]);
 
     const handleSubmit = async (isWaitlist: boolean = false) => {
+        if (submitLoading) return;
         console.log("handleSubmit called", { isWaitlist, selectedService, selectedTime });
         if (!selectedService || (!selectedTime && !isWaitlist)) {
             alert("Ошибка: Услуга или время не выбраны!");
@@ -412,6 +414,7 @@ export default function BookingPage() {
         };
 
         console.log("Submitting booking data:", data);
+        setSubmitError(null);
         try {
             setSubmitLoading(true);
             tg?.MainButton?.showProgress();
@@ -426,7 +429,7 @@ export default function BookingPage() {
         } catch (err: any) {
             console.error("Booking failed", err);
             const errorMsg = err.response?.data?.detail || "Произошла ошибка при бронировании";
-            alert(errorMsg);
+            setSubmitError(errorMsg);
             tg?.MainButton.hideProgress();
         } finally {
             setSubmitLoading(false);
@@ -590,7 +593,7 @@ export default function BookingPage() {
                                 return (
                                     <button
                                         key={slot}
-                                        onClick={() => setSelectedTime(slot)}
+                                        onClick={() => { setSelectedTime(slot); setSubmitError(null); }}
                                         className={`h-10 rounded-lg flex items-center justify-center text-sm font-medium transition-all ${isSelected
                                             ? 'bg-primary text-primary-foreground shadow-md'
                                             : 'bg-accent/40 hover:bg-accent'
@@ -625,6 +628,12 @@ export default function BookingPage() {
                                     ЛИСТ ОЖИДАНИЯ
                                 </Button>
                             </div>
+                        </div>
+                    )}
+
+                    {submitError && (
+                        <div style={{ color: "#ff4d4f", marginTop: 12 }}>
+                            {submitError}
                         </div>
                     )}
 
