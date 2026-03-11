@@ -2003,3 +2003,16 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 ## 2026-03-11 — Webhook runtime switched to per-bot secret
 
 - webhook.py: lookup TelegramBot по bot_username, проверка против bot.webhook_secret; fallback на TELEGRAM_WEBHOOK_SECRET.
+
+## 2026-03-11 — Tenant Readiness Layer
+
+- GET /api/v1/tenants/{tenant_id}/readiness — shop_configured, services_configured, telegram_bot_registered, telegram_webhook_active, booking_ready.
+
+## 2026-03-11 — Tenant Control Plane
+
+- GET /api/v1/tenants/control-plane — список tenants с readiness флагами.
+- GET /api/v1/tenants/{tenant_id}/control-plane — detail по tenant (тот же TenantControlPlaneItem).
+- tenant_readiness_service.compute_tenant_readiness — единый источник истины.
+- Schema unification: TenantReadinessFlags, TenantReadinessResponse, TenantControlPlaneItem.
+- telegram_webhook_active: multi-bot — хотя бы один active bot с webhook_secret.
+- tests/test_tenant_control_plane.py — 7 тестов (access, 404, readiness empty/fully).

@@ -1,6 +1,9 @@
 """
 Tenant provisioning endpoint — SUPERADMIN only.
-POST /api/v1/tenants  — creates tenant + default shop + admin user + default settings + (optional) service catalog.
+POST /api/v1/tenants — creates tenant + default shop + admin user + default settings + (optional) service catalog.
+GET /api/v1/tenants/control-plane — list all tenants with readiness (SUPERADMIN).
+GET /api/v1/tenants/{tenant_id}/control-plane — tenant control-plane detail (SUPERADMIN).
+GET /api/v1/tenants/{tenant_id}/readiness — tenant readiness status (SUPERADMIN).
 """
 import logging
 import re
@@ -14,6 +17,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
 from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
+from app.services.tenant_readiness_service import compute_tenant_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,30 @@ class TenantCreateResponse(BaseModel):
     services_seeded: int
     onboarding_status: str
     is_ready_for_booking: bool
+
+
+class TenantReadinessFlags(BaseModel):
+    """Base schema for readiness flags — single source of truth."""
+
+    shop_configured: bool
+    services_configured: bool
+    telegram_bot_registered: bool
+    telegram_webhook_active: bool
+    booking_ready: bool
+
+
+class TenantReadinessResponse(TenantReadinessFlags):
+    """Readiness endpoint — tenant_id + flags."""
+
+    tenant_id: int
+
+
+class TenantControlPlaneItem(TenantReadinessFlags):
+    """Control-plane list/detail — tenant_id, name, is_active + flags."""
+
+    tenant_id: int
+    name: str
+    is_active: bool
 
 
 async def _seed_default_services(db: AsyncSession, tenant_id: int) -> int:
@@ -196,3 +224,72 @@ async def create_tenant(
         onboarding_status="ready",
         is_ready_for_booking=True,
     )
+
+
+@router.get(
+    "/control-plane",
+    response_model=list[TenantControlPlaneItem],
+    summary="List all tenants with readiness (SUPERADMIN only)",
+)
+async def get_tenants_control_plane(
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> list[TenantControlPlaneItem]:
+    result = await db.execute(select(Tenant).order_by(Tenant.id))
+    tenants = result.scalars().all()
+    items = []
+    for tenant in tenants:
+        # TODO: N+1 — list endpoint does one compute_tenant_readiness per tenant.
+        # Future optimization: batch readiness aggregation (single bulk query /
+        # subqueries / EXISTS aggregation) instead of per-tenant calls.
+        flags = await compute_tenant_readiness(db, tenant.id)
+        items.append(
+            TenantControlPlaneItem(
+                tenant_id=tenant.id,
+                name=tenant.name or "",
+                is_active=tenant.status == TenantStatus.ACTIVE,
+                **flags,
+            )
+        )
+    return items
+
+
+@router.get(
+    "/{tenant_id}/control-plane",
+    response_model=TenantControlPlaneItem,
+    summary="Get tenant control-plane detail (SUPERADMIN only)",
+)
+async def get_tenant_control_plane_detail(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantControlPlaneItem:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    flags = await compute_tenant_readiness(db, tenant_id)
+    return TenantControlPlaneItem(
+        tenant_id=tenant.id,
+        name=tenant.name or "",
+        is_active=tenant.status == TenantStatus.ACTIVE,
+        **flags,
+    )
+
+
+@router.get(
+    "/{tenant_id}/readiness",
+    response_model=TenantReadinessResponse,
+    summary="Get tenant readiness status (SUPERADMIN only)",
+)
+async def get_tenant_readiness(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantReadinessResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    flags = await compute_tenant_readiness(db, tenant_id)
+    return TenantReadinessResponse(tenant_id=tenant_id, **flags)

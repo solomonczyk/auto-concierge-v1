@@ -155,6 +155,7 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
             "users",
             "shops",
             "tenant_settings",
+            "telegram_bots",
             "tenants",
             "tariff_plans",
         ):
@@ -223,6 +224,16 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
             )
             session.add(user)
 
+            # Superadmin for control-plane / tenants tests
+            superadmin = User(
+                username="superadmin",
+                hashed_password=get_password_hash("superadmin"),
+                is_active=True,
+                role=UserRole.SUPERADMIN,
+                tenant_id=None,
+            )
+            session.add(superadmin)
+
             await session.commit()
         
         yield session
@@ -283,3 +294,25 @@ async def admin_token(client: AsyncClient) -> str:
 async def auth_headers(admin_token: str) -> dict:
     """Bearer auth headers (for tests that need explicit header)."""
     return {"Authorization": f"Bearer {admin_token}"}
+
+
+async def _login_superadmin(client: AsyncClient) -> AsyncClient:
+    from app.core.config import settings
+
+    res = await client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={"username": "superadmin", "password": "superadmin"},
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert res.status_code == 200
+    csrf = res.cookies.get("csrf_token")
+    assert csrf, "Superadmin login must set csrf_token"
+    client.headers["X-CSRF-Token"] = csrf
+    return client
+
+
+@pytest.fixture
+async def client_superadmin(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """Authenticated client as superadmin (for control-plane, tenants, etc.)."""
+    async with AsyncClient(app=app, base_url="http://test") as c:
+        yield await _login_superadmin(c)
