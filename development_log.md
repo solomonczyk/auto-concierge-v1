@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-03-12 — Alembic merge migration (multiple heads)
+
+Merge миграция для объединения двух heads: a7b8c9d0e1f2 (tenant status) и e7f8a9b0c1d2 (appointment_history reschedule). Новый head: b1c2d3e4f5a6.
+
+alembic merge heads
+
 ## 2026-03-12 — E2E CI Fix (GitHub Actions #62)
 
 Исправлены падения E2E (Playwright) в CI:
