@@ -9,33 +9,121 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
+    timeout-minutes: 30
+
+    env:
+      CI: true
+
+      # Playwright contract
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+      PLAYWRIGHT_API_URL: http://127.0.0.1:8000
+      PLAYWRIGHT_ADMIN_USER: admin
+      PLAYWRIGHT_ADMIN_PASS: admin
+      PLAYWRIGHT_SLUG: auto-concierge
+
+      # Seed contract
+      SEED_TENANT_NAME: Default Tenant
+      SEED_TENANT_SLUG: auto-concierge
+      SEED_SHOP_NAME: Best Auto
+      SEED_ADMIN_USER: admin
+      SEED_ADMIN_PASS: admin
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Start DB, Redis and Backend
+        run: docker compose up -d db redis backend
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..60}; do
+            if docker compose exec -T db pg_isready -U postgres -d autoservice; then
+              echo "Postgres is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres did not become ready in time"
+          docker compose logs db
+          exit 1
+
+      - name: Run Alembic migrations
+        run: docker compose exec -T backend alembic upgrade head
+
+      - name: Seed admin and base data
+        run: |
+          docker compose exec -T \
+            -e SEED_TENANT_NAME="${SEED_TENANT_NAME}" \
+            -e SEED_TENANT_SLUG="${SEED_TENANT_SLUG}" \
+            -e SEED_SHOP_NAME="${SEED_SHOP_NAME}" \
+            -e SEED_ADMIN_USER="${SEED_ADMIN_USER}" \
+            -e SEED_ADMIN_PASS="${SEED_ADMIN_PASS}" \
+            backend python scripts/seed_data.py
+
+      - name: Wait for Backend HTTP
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/docs > /dev/null; then
+              echo "Backend is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become ready in time"
+          docker compose logs backend db redis
+          exit 1
+
+      - name: Install frontend dependencies
+        working-directory: frontend
         run: npm ci
 
       - name: Install Playwright browsers
+        working-directory: frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: http://127.0.0.1:8000
+        run: |
+          npm run dev -- --host 127.0.0.1 > /tmp/frontend.log 2>&1 &
+          echo $! > /tmp/frontend.pid
+
+      - name: Wait for frontend
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:5173 > /dev/null; then
+              echo "Frontend is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not become ready in time"
+          cat /tmp/frontend.log || true
+          exit 1
+
       - name: Run E2E tests
+        working-directory: frontend
         env:
           CI: true
-          PLAYWRIGHT_BASE_URL: ${{ vars.PLAYWRIGHT_BASE_URL || 'https://bt-aistudio.ru' }}
-          PLAYWRIGHT_ADMIN_USER: ${{ vars.PLAYWRIGHT_ADMIN_USER || 'admin' }}
-          PLAYWRIGHT_ADMIN_PASS: ${{ secrets.PLAYWRIGHT_ADMIN_PASS }}
-          PLAYWRIGHT_SLUG: ${{ vars.PLAYWRIGHT_SLUG || 'auto-concierge' }}
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+          PLAYWRIGHT_API_URL: http://127.0.0.1:8000
+          PLAYWRIGHT_ADMIN_USER: admin
+          PLAYWRIGHT_ADMIN_PASS: admin
+          PLAYWRIGHT_SLUG: auto-concierge
         run: npx playwright test --reporter=list,html
 
       - name: Upload Playwright report
@@ -45,3 +133,17 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 7
+
+      - name: Dump backend/frontend logs on failure
+        if: failure()
+        run: |
+          echo "===== docker compose ps ====="
+          docker compose ps || true
+          echo "===== backend logs ====="
+          docker compose logs backend || true
+          echo "===== db logs ====="
+          docker compose logs db || true
+          echo "===== redis logs ====="
+          docker compose logs redis || true
+          echo "===== frontend log ====="
+          cat /tmp/frontend.log || true

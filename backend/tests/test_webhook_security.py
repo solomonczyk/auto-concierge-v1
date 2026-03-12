@@ -21,7 +21,7 @@ async def test_webhook_503_in_production_when_secret_missing(
     monkeypatch.setattr(webhook_endpoint.RedisService, "get_redis", redis_get_mock)
 
     response = await client.post(
-        "/api/v1/webhook",
+        "/api/v1/webhook/test_bot",
         json={"update_id": 123456, "message": {"text": "/start"}},
     )
 
@@ -41,7 +41,7 @@ async def test_webhook_403_when_secret_required_but_header_missing(
     monkeypatch.setattr(webhook_endpoint.settings, "TELEGRAM_WEBHOOK_SECRET", "my-secret-token")
 
     response = await client.post(
-        "/api/v1/webhook",
+        "/api/v1/webhook/test_bot",
         json={"update_id": 123456, "message": {"text": "/start"}},
     )
 
@@ -58,7 +58,7 @@ async def test_webhook_403_when_secret_required_but_header_wrong(
     monkeypatch.setattr(webhook_endpoint.settings, "TELEGRAM_WEBHOOK_SECRET", "my-secret-token")
 
     response = await client.post(
-        "/api/v1/webhook",
+        "/api/v1/webhook/test_bot",
         json={"update_id": 123456, "message": {"text": "/start"}},
         headers={"X-Telegram-Bot-Api-Secret-Token": "wrong-secret"},
     )
@@ -83,8 +83,13 @@ async def test_webhook_200_when_secret_correct(
     redis_mock.set = AsyncMock(return_value=True)
     monkeypatch.setattr(webhook_endpoint.RedisService, "get_redis", MagicMock(return_value=redis_mock))
 
+    get_token_mock = AsyncMock(return_value="123:TEST")
+    monkeypatch.setattr(webhook_endpoint, "get_active_telegram_bot_token_by_username", get_token_mock)
+    fake_bot = MagicMock()
+    monkeypatch.setattr(webhook_endpoint.bot_registry, "get_bot", MagicMock(return_value=fake_bot))
+
     response = await client.post(
-        "/api/v1/webhook",
+        "/api/v1/webhook/test_bot",
         json={
             "update_id": 123456,
             "message": {

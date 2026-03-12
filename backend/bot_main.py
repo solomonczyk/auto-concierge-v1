@@ -57,14 +57,8 @@ async def main():
     from aiogram.types import MenuButtonDefault
     await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
-    scheduler = _start_scheduler()
-
     logger.info(f"Bot is polling... WEBAPP_URL: {settings.WEBAPP_URL}")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        scheduler.shutdown(wait=False)
-        logger.info("Scheduler stopped.")
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":

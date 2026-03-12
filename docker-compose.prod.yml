@@ -106,6 +106,29 @@ services:
     networks:
       - AC_network
 
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: autoservice_scheduler_prod
+    restart: always
+    command: python -m app.worker
+    env_file:
+      - .env
+    environment:
+      - ENVIRONMENT=production
+      - POSTGRES_SERVER=db
+      - REDIS_HOST=redis
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - AC_network
+
   frontend:
     build:
       context: ./frontend

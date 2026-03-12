@@ -69,7 +69,7 @@ describe('Auth storage (cookie-only)', () => {
         })
 
         const tokenSetCalls = setItemSpy.mock.calls.filter(
-            (c) => c[0] === 'token' || c[0] === 'access_token'
+            (c: unknown[]) => c[0] === 'token' || c[0] === 'access_token'
         )
         expect(tokenSetCalls).toHaveLength(0)
     })
@@ -138,8 +138,8 @@ describe('Auth storage (cookie-only)', () => {
         expect(screen.getByTestId('auth')).toHaveTextContent('no')
 
         const tokenCalls = [
-            ...setItemSpy.mock.calls.filter((c) => c[0] === 'token' || c[0] === 'access_token'),
-            ...getItemSpy.mock.calls.filter((c) => c[0] === 'token' || c[0] === 'access_token'),
+            ...setItemSpy.mock.calls.filter((c: unknown[]) => c[0] === 'token' || c[0] === 'access_token'),
+            ...getItemSpy.mock.calls.filter((c: unknown[]) => c[0] === 'token' || c[0] === 'access_token'),
         ]
         expect(tokenCalls).toHaveLength(0)
     })

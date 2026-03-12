@@ -35,7 +35,7 @@ export default defineConfig({
   webServer: isLocal
     ? {
         command: 'npm run dev',
-        url: 'http://localhost:5173/concierge',
+        url: 'http://localhost:5173',
         reuseExistingServer: true,
         timeout: 60_000,
       }

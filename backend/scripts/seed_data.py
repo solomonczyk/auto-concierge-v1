@@ -11,12 +11,19 @@ load_dotenv(os.path.join(os.getcwd(), "backend", ".env"))
 
 from sqlalchemy import select
 from app.db.session import async_session_local
-from app.models.models import User, Shop, Service, UserRole
+from app.models.models import Tenant, User, Shop, Service, UserRole
 from app.core.security import get_password_hash
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Env-driven seed contract (CI/E2E alignment)
+SEED_TENANT_NAME = os.getenv("SEED_TENANT_NAME", "Default Tenant")
+SEED_TENANT_SLUG = os.getenv("SEED_TENANT_SLUG", "auto-concierge")
+SEED_SHOP_NAME = os.getenv("SEED_SHOP_NAME", "Best Auto")
+SEED_ADMIN_USER = os.getenv("SEED_ADMIN_USER", "admin")
+SEED_ADMIN_PASS = os.getenv("SEED_ADMIN_PASS", "admin")
 
 POPULAR_SERVICES = [
     {"name": "Замена масла и фильтра", "duration": 45, "price": 1500.0},
@@ -34,13 +41,30 @@ POPULAR_SERVICES = [
 async def seed_data():
     async with async_session_local() as db:
         try:
+            # 0. Check/Create Tenant
+            logger.info("Checking Tenant...")
+            result = await db.execute(select(Tenant).where(Tenant.name == SEED_TENANT_NAME))
+            tenant = result.scalar_one_or_none()
+
+            if not tenant:
+                tenant = Tenant(name=SEED_TENANT_NAME, slug=SEED_TENANT_SLUG)
+                db.add(tenant)
+                await db.flush()
+                logger.info("Created Tenant")
+            else:
+                logger.info("Tenant already exists")
+
             # 1. Check/Create Shop
             logger.info("Checking Shop...")
-            result = await db.execute(select(Shop).where(Shop.name == "Best Auto"))
+            result = await db.execute(select(Shop).where(Shop.name == SEED_SHOP_NAME))
             shop = result.scalar_one_or_none()
             
             if not shop:
-                shop = Shop(name="Best Auto", address="123 Main St")
+                shop = Shop(
+                    tenant_id=tenant.id,
+                    name=SEED_SHOP_NAME,
+                    address="123 Main St"
+                )
                 db.add(shop)
                 await db.flush()
                 logger.info(f"Created Shop: {shop.name}")
@@ -49,13 +73,14 @@ async def seed_data():
 
             # 2. Check/Create Admin User
             logger.info("Checking Admin User...")
-            result = await db.execute(select(User).where(User.username == "admin"))
+            result = await db.execute(select(User).where(User.username == SEED_ADMIN_USER))
             user = result.scalar_one_or_none()
 
             if not user:
                 user = User(
-                    username="admin",
-                    hashed_password=get_password_hash("admin"),
+                    tenant_id=tenant.id,
+                    username=SEED_ADMIN_USER,
+                    hashed_password=get_password_hash(SEED_ADMIN_PASS),
                     shop_id=shop.id,
                     role=UserRole.ADMIN
                 )
@@ -75,6 +100,7 @@ async def seed_data():
             for svc in POPULAR_SERVICES:
                 if svc["name"] not in existing_names:
                     new_service = Service(
+                        tenant_id=tenant.id,
                         name=svc["name"],
                         duration_minutes=svc["duration"],
                         base_price=svc["price"]

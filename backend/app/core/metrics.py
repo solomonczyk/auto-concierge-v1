@@ -96,6 +96,18 @@ HTTP_ERROR_TOTAL = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# Outbox
+# ---------------------------------------------------------------------------
+OUTBOX_EVENTS_PROCESSED_TOTAL = Counter(
+    "outbox_events_processed_total",
+    "Outbox events successfully processed",
+)
+OUTBOX_EVENTS_FAILED_TOTAL = Counter(
+    "outbox_events_failed_total",
+    "Outbox events permanently failed (max attempts reached)",
+)
+
+# ---------------------------------------------------------------------------
 # Appointment status transitions
 # ---------------------------------------------------------------------------
 APPOINTMENT_STATUS_TRANSITIONS_TOTAL = Counter(

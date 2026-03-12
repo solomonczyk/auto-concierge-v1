@@ -5,9 +5,11 @@ interface UpdateAppointmentData {
     id: number;
     service_id?: number;
     start_time?: string;
-    car_make?: string | null;
-    car_year?: number | null;
-    vin?: string | null;
+    auto_info?: {
+        car_make?: string | null;
+        car_year?: number | null;
+        vin?: string | null;
+    };
 }
 
 export function useUpdateAppointment() {

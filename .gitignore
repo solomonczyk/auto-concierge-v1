@@ -28,6 +28,9 @@ infra_data/
 # DB backups (may contain sensitive data)
 backups/
 
+# Large baseline archives (use LFS or external storage)
+artifacts/
+
 # SSL Certificates
 *.pem
 *.key

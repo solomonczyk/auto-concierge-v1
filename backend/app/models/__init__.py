@@ -1,0 +1,1 @@
+from app.models.appointment_intake import AppointmentIntake

@@ -32,7 +32,9 @@ def mock_internal_methods():
 async def test_appointment_confirmed_routes_to_client(mock_internal_methods):
     """appointment_confirmed + client_telegram_id → notify_client_status_change called."""
     mocks = mock_internal_methods
+    mock_db = AsyncMock()
     await NotificationService.dispatch(
+        mock_db,
         event_type="appointment_confirmed",
         appointment_id=1,
         tenant_id=1,
@@ -40,9 +42,11 @@ async def test_appointment_confirmed_routes_to_client(mock_internal_methods):
         context={"service_name": "Диагностика"},
     )
     mocks["notify_client_status_change"].assert_called_once_with(
-        chat_id=12345,
-        service_name="Диагностика",
-        new_status="confirmed",
+        mock_db,
+        1,
+        12345,
+        "Диагностика",
+        "confirmed",
     )
     mocks["send_raw_message"].assert_not_called()
     mocks["notify_admin"].assert_not_called()
@@ -53,7 +57,9 @@ async def test_appointment_confirmed_routes_to_client(mock_internal_methods):
 async def test_appointment_cancelled_routes_to_client(mock_internal_methods):
     """appointment_cancelled + client_telegram_id → notify_client_status_change called."""
     mocks = mock_internal_methods
+    mock_db = AsyncMock()
     await NotificationService.dispatch(
+        mock_db,
         event_type="appointment_cancelled",
         appointment_id=2,
         tenant_id=1,
@@ -61,9 +67,11 @@ async def test_appointment_cancelled_routes_to_client(mock_internal_methods):
         context={"service_name": "Замена масла"},
     )
     mocks["notify_client_status_change"].assert_called_once_with(
-        chat_id=67890,
-        service_name="Замена масла",
-        new_status="cancelled",
+        mock_db,
+        1,
+        67890,
+        "Замена масла",
+        "cancelled",
     )
     mocks["send_raw_message"].assert_not_called()
     mocks["notify_admin"].assert_not_called()
@@ -74,7 +82,9 @@ async def test_appointment_cancelled_routes_to_client(mock_internal_methods):
 async def test_appointment_no_show_routes_to_manager_only(mock_internal_methods):
     """appointment_no_show + manager_chat_id → send_raw_message to manager, NOT to client."""
     mocks = mock_internal_methods
+    mock_db = AsyncMock()
     await NotificationService.dispatch(
+        mock_db,
         event_type="appointment_no_show",
         appointment_id=3,
         tenant_id=1,
@@ -86,8 +96,8 @@ async def test_appointment_no_show_routes_to_manager_only(mock_internal_methods)
     )
     mocks["send_raw_message"].assert_called_once()
     call_args = mocks["send_raw_message"].call_args
-    assert call_args[0][0] == 99999
-    assert "Клиент не явился" in call_args[0][1]
+    assert call_args[0][2] == 99999
+    assert "Клиент не явился" in call_args[0][3]
     mocks["notify_client_status_change"].assert_not_called()
     mocks["send_booking_confirmation"].assert_not_called()
 
@@ -96,7 +106,9 @@ async def test_appointment_no_show_routes_to_manager_only(mock_internal_methods)
 async def test_appointment_no_show_does_not_send_to_client(mock_internal_methods):
     """appointment_no_show: client_telegram_id present but client must NOT receive notification."""
     mocks = mock_internal_methods
+    mock_db = AsyncMock()
     await NotificationService.dispatch(
+        mock_db,
         event_type="appointment_no_show",
         appointment_id=4,
         tenant_id=1,
@@ -110,15 +122,17 @@ async def test_appointment_no_show_does_not_send_to_client(mock_internal_methods
     mocks["send_booking_confirmation"].assert_not_called()
     mocks["send_raw_message"].assert_called_once()
     call_args = mocks["send_raw_message"].call_args
-    assert call_args[0][0] == 88888
-    assert "Клиент не явился" in call_args[0][1]
+    assert call_args[0][2] == 88888
+    assert "Клиент не явился" in call_args[0][3]
 
 
 @pytest.mark.asyncio
 async def test_appointment_created_both_routes_when_not_waitlist(mock_internal_methods):
     """appointment_created + recipient_roles=[client,manager] + is_waitlist=False → both routes."""
     mocks = mock_internal_methods
+    mock_db = AsyncMock()
     await NotificationService.dispatch(
+        mock_db,
         event_type="appointment_created",
         appointment_id=5,
         tenant_id=1,
@@ -136,10 +150,10 @@ async def test_appointment_created_both_routes_when_not_waitlist(mock_internal_m
     )
     mocks["send_booking_confirmation"].assert_called_once()
     call = mocks["send_booking_confirmation"].call_args
-    assert call[0][0] == 33333
-    assert "Запись подтверждена" in call[0][1]
+    assert call[0][2] == 33333
+    assert "Запись подтверждена" in call[0][3]
     mocks["send_raw_message"].assert_called_once()
     call_raw = mocks["send_raw_message"].call_args
-    assert call_raw[0][0] == 77777
-    assert "Новая запись" in call_raw[0][1]
+    assert call_raw[0][2] == 77777
+    assert "Новая запись" in call_raw[0][3]
     mocks["notify_client_status_change"].assert_not_called()

@@ -8,6 +8,7 @@ from app.services.outbox_service import (
     MAX_OUTBOX_ATTEMPTS,
     OUTBOX_ENTITY_APPOINTMENT,
     OUTBOX_EVENT_APPOINTMENT_CREATED,
+    OUTBOX_EVENT_APPOINTMENT_UPDATED,
     OUTBOX_PAYLOAD_APPOINTMENT_ID,
     OUTBOX_PAYLOAD_TENANT_ID,
     OUTBOX_RETRY_DELAY_SECONDS,
@@ -135,6 +136,38 @@ async def test_dispatch_outbox_event_success(db_session, monkeypatch):
         entity_type="test",
         entity_id="1",
         payload={},
+        status="processing",
+        attempts=1,
+        last_error="old error",
+    )
+
+    await dispatch_outbox_event(event, db_session)
+
+    assert called["value"] is True
+    assert event.status == "processed"
+    assert event.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_outbox_event_success_for_appointment_updated(db_session, monkeypatch):
+    """Full dispatch path for appointment_updated: dispatch -> handle -> mark_processed."""
+    called = {"value": False}
+
+    async def fake_handle(event, db):
+        called["value"] = True
+        assert event.event_type == OUTBOX_EVENT_APPOINTMENT_UPDATED
+
+    monkeypatch.setattr(
+        "app.services.outbox_dispatcher.handle_outbox_event",
+        fake_handle,
+    )
+
+    event = OutboxEvent(
+        tenant_id=1,
+        event_type=OUTBOX_EVENT_APPOINTMENT_UPDATED,
+        entity_type=OUTBOX_ENTITY_APPOINTMENT,
+        entity_id="123",
+        payload={OUTBOX_PAYLOAD_APPOINTMENT_ID: 123, OUTBOX_PAYLOAD_TENANT_ID: 1},
         status="processing",
         attempts=1,
         last_error="old error",
@@ -339,6 +372,34 @@ async def test_handle_outbox_event_valid_payload_calls_sync(db_session, monkeypa
     assert len(called) == 1
     assert called[0][OUTBOX_PAYLOAD_APPOINTMENT_ID] == 42
     assert called[0][OUTBOX_PAYLOAD_TENANT_ID] == 7
+    assert isinstance(called[0][OUTBOX_PAYLOAD_APPOINTMENT_ID], int)
+    assert isinstance(called[0][OUTBOX_PAYLOAD_TENANT_ID], int)
+
+
+@pytest.mark.asyncio
+async def test_handle_outbox_event_supports_appointment_updated(db_session, monkeypatch):
+    """Verify appointment_updated event type triggers run_appointment_integration_sync with correct ids."""
+    from app.services.outbox_dispatcher import handle_outbox_event
+
+    called = []
+
+    async def fake_sync(*, db, appointment_id, tenant_id):
+        called.append({OUTBOX_PAYLOAD_APPOINTMENT_ID: appointment_id, OUTBOX_PAYLOAD_TENANT_ID: tenant_id})
+
+    monkeypatch.setattr(
+        "app.services.outbox_dispatcher.run_appointment_integration_sync",
+        fake_sync,
+    )
+
+    event = SimpleNamespace(
+        event_type=OUTBOX_EVENT_APPOINTMENT_UPDATED,
+        payload={OUTBOX_PAYLOAD_APPOINTMENT_ID: 99, OUTBOX_PAYLOAD_TENANT_ID: 3},
+    )
+    await handle_outbox_event(event, db_session)
+
+    assert len(called) == 1
+    assert called[0][OUTBOX_PAYLOAD_APPOINTMENT_ID] == 99
+    assert called[0][OUTBOX_PAYLOAD_TENANT_ID] == 3
     assert isinstance(called[0][OUTBOX_PAYLOAD_APPOINTMENT_ID], int)
     assert isinstance(called[0][OUTBOX_PAYLOAD_TENANT_ID], int)
 

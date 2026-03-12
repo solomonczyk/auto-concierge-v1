@@ -19,7 +19,6 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.db.session import async_session_local
-from app.services.reminder_service import send_evening_reminders, send_morning_reminders, send_one_hour_reminders
 from app.services.sla_service import auto_no_show, check_unconfirmed_appointments
 
 logger = logging.getLogger(__name__)
@@ -56,27 +55,9 @@ async def main():
         id="check_unconfirmed",
         replace_existing=True,
     )
-    scheduler.add_job(
-        send_evening_reminders,
-        CronTrigger(hour=20, minute=0, timezone=tz),
-        id="evening_reminders",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        send_morning_reminders,
-        CronTrigger(hour=8, minute=0, timezone=tz),
-        id="morning_reminders",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        send_one_hour_reminders,
-        IntervalTrigger(minutes=10, timezone=tz),
-        id="one_hour_reminders",
-        replace_existing=True,
-    )
 
     scheduler.start()
-    logger.info("worker.started scheduler=apscheduler jobs=5")
+    logger.info("worker.started scheduler=apscheduler jobs=2")
 
     try:
         while True:

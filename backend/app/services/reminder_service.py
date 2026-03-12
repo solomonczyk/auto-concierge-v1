@@ -6,7 +6,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.orm import joinedload
 
 from app.core.config import settings
-from app.services.tenant_settings_service import get_tenant_timezone
+from app.services.tenant_settings_service import get_tenant_timezones
 from app.db.session import async_session_local
 from app.models.models import Appointment, AppointmentStatus
 
@@ -61,11 +61,13 @@ async def send_evening_reminders():
 
     sent = 0
     async with async_session_local() as db:
+        tenant_ids = list({appt.tenant_id for appt in appointments})
+        tz_map = await get_tenant_timezones(db, tenant_ids)
         for appt in appointments:
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            tz_name = tz_map.get(appt.tenant_id, settings.SHOP_TIMEZONE)
             time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"🔔 <b>Напоминание!</b>\n\n"
@@ -96,11 +98,13 @@ async def send_morning_reminders():
 
     sent = 0
     async with async_session_local() as db:
+        tenant_ids = list({appt.tenant_id for appt in appointments})
+        tz_map = await get_tenant_timezones(db, tenant_ids)
         for appt in appointments:
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            tz_name = tz_map.get(appt.tenant_id, settings.SHOP_TIMEZONE)
             time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"🌅 <b>Доброе утро!</b>\n\n"
@@ -145,11 +149,13 @@ async def send_one_hour_reminders():
         result = await db.execute(stmt)
         appointments = result.scalars().all()
 
+        tenant_ids = list({appt.tenant_id for appt in appointments})
+        tz_map = await get_tenant_timezones(db, tenant_ids)
         for appt in appointments:
             if not appt.client or not appt.client.telegram_id:
                 continue
             service_name = appt.service.name if appt.service else "услугу"
-            tz_name = await get_tenant_timezone(db, appt.tenant_id)
+            tz_name = tz_map.get(appt.tenant_id, settings.SHOP_TIMEZONE)
             time_str = _format_time(appt.start_time, tz_name)
             text = (
                 f"⏰ <b>Напоминание!</b>\n\n"

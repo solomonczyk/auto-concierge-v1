@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-03-12 — E2E CI Fix (GitHub Actions #62)
+
+Исправлены падения E2E (Playwright) в CI:
+
+- **Vite proxy:** target изменён с `8001` на `process.env.VITE_API_URL || 8000` — backend в CI на порту 8000
+- **bot-webhook.spec.ts:** использование `PLAYWRIGHT_API_URL` для webhook (backend), вместо `PLAYWRIGHT_BASE_URL` (frontend 5173)
+- **e2e workflow:** добавлена переменная `PLAYWRIGHT_API_URL: http://127.0.0.1:8000` в env
+
+e2e ci fix
+
 ## 2026-03-12 — Reschedule Flow Layer (полный контур)
 
 Реализован Reschedule Flow Layer — перенос записи на новый слот:

@@ -28,9 +28,9 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
             const date = new Date(appointment.start_time);
             const formattedDate = date.toISOString().slice(0, 16);
             setStartTime(formattedDate);
-            setCarMake(appointment.car_make || '');
-            setCarYear(appointment.car_year?.toString() || '');
-            setVin(appointment.vin || '');
+            setCarMake(appointment.auto_info?.car_make || '');
+            setCarYear(appointment.auto_info?.car_year?.toString() || '');
+            setVin(appointment.auto_info?.vin || '');
         }
     }, [appointment]);
 
@@ -41,9 +41,11 @@ export default function AppointmentEditDialog({ appointment, isOpen, onClose }: 
             id: appointment.id,
             service_id: serviceId,
             start_time: new Date(startTime).toISOString(),
-            car_make: carMake.trim() || null,
-            car_year: carYear ? parseInt(carYear) : null,
-            vin: vin.trim() || null,
+            auto_info: {
+                car_make: carMake.trim() || null,
+                car_year: carYear ? parseInt(carYear) : null,
+                vin: vin.trim() || null,
+            },
         }, {
             onSuccess: () => onClose(),
         });

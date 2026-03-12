@@ -176,8 +176,13 @@ async def test_full_client_journey(
         webhook_endpoint.RedisService, "get_redis", staticmethod(lambda: fake_wh_redis)
     )
 
+    get_token_mock = AsyncMock(return_value="123:TEST")
+    monkeypatch.setattr(webhook_endpoint, "get_active_telegram_bot_token_by_username", get_token_mock)
+    fake_bot = MagicMock()
+    monkeypatch.setattr(webhook_endpoint.bot_registry, "get_bot", MagicMock(return_value=fake_bot))
+
     wh_res = await client.post(
-        f"{settings.API_V1_STR}/webhook",
+        f"{settings.API_V1_STR}/webhook/test_bot",
         json={
             "update_id": 999999,
             "message": {

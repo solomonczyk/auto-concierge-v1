@@ -22,3 +22,25 @@ async def get_tenant_timezone(
     if tenant_settings and tenant_settings.timezone:
         return tenant_settings.timezone
     return default_timezone
+
+
+async def get_tenant_timezones(
+    db: AsyncSession,
+    tenant_ids: list[int],
+    default_timezone: str = "Europe/Moscow",
+) -> dict[int, str]:
+    if not tenant_ids:
+        return {}
+
+    stmt = select(TenantSettings).where(TenantSettings.tenant_id.in_(tenant_ids))
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    timezone_map = {
+        tenant_id: default_timezone
+        for tenant_id in tenant_ids
+    }
+    for row in rows:
+        timezone_map[row.tenant_id] = row.timezone or default_timezone
+
+    return timezone_map

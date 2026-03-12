@@ -2,6 +2,14 @@
 
 AI-assisted appointment orchestration platform for service businesses.
 
+## Project Execution Strategy
+
+The primary development roadmap and launch criteria are defined in:
+
+**[docs/PROJECT_EXECUTION_STRATEGY.md](docs/PROJECT_EXECUTION_STRATEGY.md)**
+
+All development decisions must follow this document until STO product launch.
+
 ## Project Model
 
 This repository contains the **core platform**.

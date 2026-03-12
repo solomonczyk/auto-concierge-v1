@@ -3,11 +3,13 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.metrics import OUTBOX_EVENTS_FAILED_TOTAL, OUTBOX_EVENTS_PROCESSED_TOTAL
 from app.models.models import OutboxEvent
 
 MAX_OUTBOX_ATTEMPTS = 10
 OUTBOX_RETRY_DELAY_SECONDS = 60
 OUTBOX_EVENT_APPOINTMENT_CREATED = "appointment_created"
+OUTBOX_EVENT_APPOINTMENT_UPDATED = "appointment_updated"
 OUTBOX_ENTITY_APPOINTMENT = "appointment"
 OUTBOX_PAYLOAD_APPOINTMENT_ID = "appointment_id"
 OUTBOX_PAYLOAD_TENANT_ID = "tenant_id"
@@ -55,6 +57,25 @@ async def enqueue_appointment_created_event(
     )
 
 
+async def enqueue_appointment_updated_event(
+    db: AsyncSession,
+    *,
+    tenant_id: int,
+    appointment_id: int,
+) -> None:
+    await enqueue_outbox_event(
+        db,
+        tenant_id=tenant_id,
+        event_type=OUTBOX_EVENT_APPOINTMENT_UPDATED,
+        entity_type=OUTBOX_ENTITY_APPOINTMENT,
+        entity_id=str(appointment_id),
+        payload={
+            OUTBOX_PAYLOAD_APPOINTMENT_ID: appointment_id,
+            OUTBOX_PAYLOAD_TENANT_ID: tenant_id,
+        },
+    )
+
+
 async def fetch_pending_outbox_events(
     db: AsyncSession,
     *,
@@ -87,6 +108,7 @@ async def mark_outbox_event_processed(
 ) -> None:
     event.status = "processed"
     event.last_error = None
+    OUTBOX_EVENTS_PROCESSED_TOTAL.inc()
 
 
 async def mark_outbox_event_failed(
@@ -97,6 +119,7 @@ async def mark_outbox_event_failed(
     if (event.attempts or 0) >= MAX_OUTBOX_ATTEMPTS:
         event.status = "failed"
         event.last_error = error_message
+        OUTBOX_EVENTS_FAILED_TOTAL.inc()
         return
 
     event.status = "pending"

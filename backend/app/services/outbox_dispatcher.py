@@ -7,14 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.appointment_integration_service import run_appointment_integration_sync
 from app.services.outbox_service import (
     OUTBOX_EVENT_APPOINTMENT_CREATED,
+    OUTBOX_EVENT_APPOINTMENT_UPDATED,
     OUTBOX_PAYLOAD_APPOINTMENT_ID,
     OUTBOX_PAYLOAD_TENANT_ID,
 )
 
+_SUPPORTED_APPOINTMENT_EVENTS = (OUTBOX_EVENT_APPOINTMENT_CREATED, OUTBOX_EVENT_APPOINTMENT_UPDATED)
+
 
 async def handle_outbox_event(event, db: AsyncSession) -> None:
     """Dispatch event to side effects. Fail-closed: no silent no-ops."""
-    if event.event_type != OUTBOX_EVENT_APPOINTMENT_CREATED:
+    if event.event_type not in _SUPPORTED_APPOINTMENT_EVENTS:
         raise ValueError(f"Unsupported outbox event_type: {event.event_type}")
 
     payload = event.payload

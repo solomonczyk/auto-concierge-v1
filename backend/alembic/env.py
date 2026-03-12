@@ -24,6 +24,7 @@ from app.db.session import Base
 from app.models.models import User, Shop, Service, Client, Appointment  # Explicit imports for metadata
 from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from app.models.telegram_bot import TelegramBot
+from app.models.appointment_intake import AppointmentIntake
 
 target_metadata = Base.metadata
 

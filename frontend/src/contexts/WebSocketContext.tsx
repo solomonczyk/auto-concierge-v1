@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react'
-import { api } from '@/lib/api'
 
 interface WebSocketContextType {
     isConnected: boolean

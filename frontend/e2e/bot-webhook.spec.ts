@@ -2,15 +2,15 @@ import { test, expect } from '@playwright/test'
 
 /**
  * E2E: Webhook бота — симуляция входящего Update от Telegram.
- * Локально: webhook на http://localhost:8000/api/v1/webhook
- * Прод:     webhook на https://bt-aistudio.ru/concierge/api/v1/webhook
- *           (nginx: /concierge/api/ → :8002/api/)
+ * Использует PLAYWRIGHT_API_URL (backend). В CI — http://127.0.0.1:8000.
+ * Прод: PLAYWRIGHT_API_URL = https://bt-aistudio.ru (nginx проксирует /concierge/api/)
  */
-const BASE = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:8000'
-// На проде frontend и API за одним доменом, webhook путь отличается
-const WEBHOOK_URL = BASE.includes('localhost')
-  ? `${BASE}/api/v1/webhook`
-  : `${BASE}/concierge/api/v1/webhook`
+const apiBase = process.env.PLAYWRIGHT_API_URL || 'http://127.0.0.1:8000'
+const isSameOrigin =
+  process.env.PLAYWRIGHT_BASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.PLAYWRIGHT_BASE_URL)
+const WEBHOOK_URL = isSameOrigin
+  ? `${process.env.PLAYWRIGHT_BASE_URL!.replace(/\/$/, '')}/concierge/api/v1/webhook`
+  : `${apiBase.replace(/\/$/, '')}/api/v1/webhook`
 
 test.describe('Bot Webhook', () => {
   const minimalUpdate = {

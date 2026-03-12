@@ -55,11 +55,11 @@ function DraggableCard({ appointment, onEdit, onDragStart }: {
                             <span className="shrink-0 text-primary/60 text-xs">👤</span>
                             <span className="truncate">{appointment.client?.full_name || "Без имени"}</span>
                         </div>
-                        {(appointment.car_make || appointment.car_year) && (
+                        {(appointment.auto_info?.car_make || appointment.auto_info?.car_year) && (
                             <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
                                 <span className="shrink-0 text-primary/60 text-xs">🚗</span>
                                 <span className="truncate">
-                                    {appointment.car_make || "Авто"}{appointment.car_year ? `, ${appointment.car_year}` : ""}
+                                    {appointment.auto_info?.car_make || "Авто"}{appointment.auto_info?.car_year ? `, ${appointment.auto_info.car_year}` : ""}
                                 </span>
                             </div>
                         )}
@@ -174,7 +174,7 @@ export default function KanbanBoard() {
             completed: [],
         };
         appointments
-            .filter((appt) => visibleSet.has(appt.status.toLowerCase()))
+            .filter((appt) => visibleSet.has(appt.status.toLowerCase() as (typeof KANBAN_VISIBLE_STATUSES)[number]))
             .forEach((appt) => {
                 const status = appt.status.toLowerCase();
                 groups[status].push(appt);
