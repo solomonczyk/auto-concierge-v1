@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.models import Tenant, User
 from app.models.telegram_bot import TelegramBot
+from app.services.telegram_webhook_service import provision_telegram_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,12 @@ router = APIRouter()
 
 
 class TelegramBotRegisterRequest(BaseModel):
+    """Request schema for registering a Telegram bot for a tenant (SaaS onboarding)."""
+
     bot_token: str
     bot_username: Optional[str] = None
+    display_name: Optional[str] = None  # optional human-readable label
+    is_active: bool = True
 
     @field_validator("bot_token")
     @classmethod
@@ -38,6 +43,8 @@ class TelegramBotRegisterRequest(BaseModel):
 
 
 class TelegramBotRegisterResponse(BaseModel):
+    """Response schema for bot registration — tenant_id, bot_username, is_active, webhook info."""
+
     telegram_bot_id: int
     tenant_id: int
     bot_username: Optional[str]
@@ -55,11 +62,27 @@ class TelegramBotActivateResponse(BaseModel):
     onboarding_status: str
 
 
+class WebhookProvisionResponse(BaseModel):
+    """Response for POST .../bots/{bot_id}/webhook — SaaS onboarding."""
+
+    tenant_id: int
+    bot_id: int
+    bot_username: str | None
+    webhook_url: str
+    webhook_secret_present: bool
+
+
+@router.post(
+    "/{tenant_id}/bots",
+    response_model=TelegramBotRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register Telegram bot for tenant (SUPERADMIN only) — SaaS onboarding",
+)
 @router.post(
     "/{tenant_id}/telegram-bots",
     response_model=TelegramBotRegisterResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register Telegram bot for tenant (SUPERADMIN only)",
+    summary="Register Telegram bot for tenant (SUPERADMIN only) — legacy path",
 )
 async def register_telegram_bot(
     tenant_id: int,
@@ -87,18 +110,22 @@ async def register_telegram_bot(
             detail="This bot token is already registered to another tenant",
         )
 
-    # 3. Upsert: create or update bot for this tenant
-    bot = (await db.execute(select(TelegramBot).where(TelegramBot.tenant_id == tenant_id))).scalar_one_or_none()
-    if bot:
+    # 3. Upsert: create or update single bot for this tenant (retry-safe: no duplicate; re-register updates token)
+    existing_bot_same_tenant = (
+        await db.execute(select(TelegramBot).where(TelegramBot.tenant_id == tenant_id))
+    ).scalars().first()
+    if existing_bot_same_tenant:
+        # Update existing bot for this tenant; do not create duplicate
+        bot = existing_bot_same_tenant
         bot.bot_token = payload.bot_token
-        bot.bot_username = payload.bot_username
-        bot.is_active = True
+        bot.bot_username = payload.bot_username or bot.bot_username
+        bot.is_active = payload.is_active
     else:
         bot = TelegramBot(
             tenant_id=tenant_id,
             bot_token=payload.bot_token,
             bot_username=payload.bot_username,
-            is_active=True,
+            is_active=payload.is_active,
         )
         db.add(bot)
 
@@ -129,6 +156,50 @@ async def register_telegram_bot(
         webhook_url=webhook_url,
         webhook_secret_required=True,
         onboarding_status=onboarding_status,
+    )
+
+
+@router.post(
+    "/{tenant_id}/bots/{bot_id}/webhook",
+    response_model=WebhookProvisionResponse,
+    summary="Provision webhook for tenant bot (SUPERADMIN only) — SaaS onboarding",
+)
+async def provision_bot_webhook(
+    tenant_id: int,
+    bot_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> WebhookProvisionResponse:
+    bot = (
+        await db.execute(
+            select(TelegramBot).where(
+                TelegramBot.id == bot_id,
+                TelegramBot.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not bot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram bot not found")
+    if not bot.bot_username or not bot.bot_username.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bot_username is required for webhook; re-register the bot with username",
+        )
+    if not bot.webhook_secret or not bot.webhook_secret.strip():
+        bot.webhook_secret = secrets.token_urlsafe(32)[:256]
+        await db.commit()
+        await db.refresh(bot)
+    # Retry-safe: repeated call updates secret and re-calls Telegram setWebhook
+    await provision_telegram_webhook(db, bot)
+    base = (settings.SITE_URL or "").rstrip("/")
+    webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
+    webhook_url = f"{base}{webhook_path}" if base else webhook_path
+    return WebhookProvisionResponse(
+        tenant_id=tenant_id,
+        bot_id=bot.id,
+        bot_username=bot.bot_username,
+        webhook_url=webhook_url,
+        webhook_secret_present=bool(bot.webhook_secret and bot.webhook_secret.strip()),
     )
 
 

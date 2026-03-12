@@ -18,11 +18,21 @@ from app.api.deps import require_superadmin
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import get_db
-from app.models.models import Service, Shop, Tenant, TenantSettings, TenantStatus, User, UserRole
+from app.models.models import Service, Shop, TariffPlan, Tenant, TenantSettings, TenantStatus, User, UserRole
 from app.schemas.tenant_lifecycle import TenantLifecycleResponse, TenantStatusRead, TenantStatusUpdate
+from app.schemas.tenant_provisioning import (
+    TenantOnboardingStateResponse,
+    TenantTariffAssignRequest,
+    TenantTariffAssignResponse,
+)
 from app.models.telegram_bot import TelegramBot
 from app.services.billing_gate import check_billing_ok
-from app.services.tenant_readiness_service import compute_tenant_readiness, get_webhook_operational_state
+from app.services.onboarding_service import finalize_tenant_onboarding
+from app.services.tenant_readiness_service import (
+    compute_onboarding_state,
+    compute_tenant_readiness,
+    get_webhook_operational_state,
+)
 from app.services.telegram_webhook_service import provision_telegram_webhook
 
 logger = logging.getLogger(__name__)
@@ -33,10 +43,13 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$")
 
 
 class TenantCreateRequest(BaseModel):
+    """Full provisioning: name, slug, admin; optional contact_email, timezone, seed_services."""
+
     name: str
     slug: str
     admin_username: str
     admin_password: str
+    contact_email: str | None = None
     timezone: str = "Europe/Moscow"
     seed_services: bool = True
 
@@ -76,14 +89,19 @@ class TenantCreateRequest(BaseModel):
 
 
 class TenantCreateResponse(BaseModel):
-    tenant_id: int
+    """Minimal contract: id, name, slug, status; extended with shop/admin when full provisioning."""
+
+    id: int
+    name: str
     slug: str
-    shop_id: int
-    dashboard_url: str
-    admin_username: str
-    services_seeded: int
-    onboarding_status: str
-    is_ready_for_booking: bool
+    status: str
+    tenant_id: int | None = None  # alias, same as id
+    shop_id: int | None = None
+    dashboard_url: str | None = None
+    admin_username: str | None = None
+    services_seeded: int = 0
+    onboarding_status: str = "pending"
+    is_ready_for_booking: bool = False
 
 
 class TenantReadinessFlags(BaseModel):
@@ -173,12 +191,13 @@ async def create_tenant(
     db: AsyncSession = Depends(get_db),
     _superadmin: User = Depends(require_superadmin),
 ) -> TenantCreateResponse:
-    # --- 1. Uniqueness checks ---
+    # --- 1. Uniqueness / idempotency: duplicate slug → 409 (retry-safe: no duplicate tenant) ---
     slug_exists = await db.execute(select(Tenant).where(Tenant.slug == payload.slug))
-    if slug_exists.scalar_one_or_none():
+    existing = slug_exists.scalar_one_or_none()
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Tenant with slug '{payload.slug}' already exists",
+            detail=f"Tenant with slug '{payload.slug}' already exists (id={existing.id}). Use a different slug or update the existing tenant.",
         )
 
     username_exists = await db.execute(select(User).where(User.username == payload.admin_username))
@@ -188,11 +207,11 @@ async def create_tenant(
             detail=f"Username '{payload.admin_username}' is already taken",
         )
 
-    # --- 2. Create Tenant ---
+    # --- 2. Create Tenant (SaaS: start PENDING; finalize to ACTIVE after onboarding) ---
     tenant = Tenant(
         name=payload.name,
         slug=payload.slug,
-        status=TenantStatus.ACTIVE,
+        status=TenantStatus.PENDING,
     )
     db.add(tenant)
     await db.flush()  # get tenant.id before using it
@@ -235,25 +254,73 @@ async def create_tenant(
     await db.commit()
 
     dashboard_url = f"{settings.SITE_URL}/concierge/{payload.slug}"
+    flags = await compute_tenant_readiness(db, tenant.id)
+    readiness_ok = flags.get("booking_ready", False)
 
     logger.info(
-        "[Provisioning] Tenant created: id=%s slug=%s shop_id=%s admin=%s services=%s",
+        "[Provisioning] Tenant created: id=%s slug=%s shop_id=%s admin=%s services=%s status=%s",
         tenant.id,
         payload.slug,
         shop.id,
         payload.admin_username,
         services_seeded,
+        tenant.status.value,
     )
 
     return TenantCreateResponse(
-        tenant_id=tenant.id,
+        id=tenant.id,
+        name=tenant.name,
         slug=payload.slug,
+        status=tenant.status.value,
+        tenant_id=tenant.id,
         shop_id=shop.id,
         dashboard_url=dashboard_url,
         admin_username=payload.admin_username,
         services_seeded=services_seeded,
-        onboarding_status="ready",
-        is_ready_for_booking=True,
+        onboarding_status="ready" if readiness_ok else "pending",
+        is_ready_for_booking=readiness_ok,
+    )
+
+
+@router.post(
+    "/{tenant_id}/tariff",
+    response_model=TenantTariffAssignResponse,
+    summary="Assign tariff to tenant (SUPERADMIN only)",
+)
+async def assign_tenant_tariff(
+    tenant_id: int,
+    payload: TenantTariffAssignRequest,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantTariffAssignResponse:
+    if not payload.tariff_plan_id and not payload.tariff_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide either tariff_plan_id or tariff_code",
+        )
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    if payload.tariff_plan_id:
+        plan = (await db.execute(select(TariffPlan).where(TariffPlan.id == payload.tariff_plan_id))).scalar_one_or_none()
+    else:
+        plan = (
+            await db.execute(
+                select(TariffPlan).where(TariffPlan.name == (payload.tariff_code or "").strip().lower())
+            )
+        ).scalar_one_or_none()
+    if not plan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tariff plan not found: {payload.tariff_plan_id or payload.tariff_code}",
+        )
+    tenant.tariff_plan_id = plan.id
+    await db.commit()
+    await db.refresh(tenant)
+    return TenantTariffAssignResponse(
+        tenant_id=tenant.id,
+        tariff_plan_id=plan.id,
+        tariff_code=plan.name,
     )
 
 
@@ -354,6 +421,41 @@ async def get_tenant_lifecycle(
         billing_ok=billing_ok,
         readiness_ok=readiness_ok,
     )
+
+
+@router.get(
+    "/{tenant_id}/onboarding",
+    response_model=TenantOnboardingStateResponse,
+    summary="Get tenant onboarding state (SUPERADMIN only)",
+)
+async def get_tenant_onboarding(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+) -> TenantOnboardingStateResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    state = await compute_onboarding_state(db, tenant_id)
+    return TenantOnboardingStateResponse(tenant_id=tenant_id, **state)
+
+
+@router.post(
+    "/{tenant_id}/onboarding/finalize",
+    summary="Finalize onboarding: set tenant to ACTIVE when complete (SUPERADMIN only)",
+)
+async def post_tenant_onboarding_finalize(
+    tenant_id: int,
+    db: AsyncSession = Depends(get_db),
+    _superadmin: User = Depends(require_superadmin),
+):
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    ok, message = await finalize_tenant_onboarding(db, tenant_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    return {"tenant_id": tenant_id, "finalized": True, "message": message}
 
 
 @router.get(

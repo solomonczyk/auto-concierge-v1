@@ -79,6 +79,75 @@ async def compute_tenant_readiness(db: AsyncSession, tenant_id: int) -> dict:
     }
 
 
+async def compute_onboarding_state(db: AsyncSession, tenant_id: int) -> dict:
+    """
+    Compute onboarding progress for a tenant (SaaS onboarding state).
+    Returns: tenant_created, tariff_assigned, telegram_bot_registered, webhook_provisioned,
+    readiness_ok, onboarding_complete, missing_steps.
+    """
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    tenant_created = tenant is not None
+    tariff_assigned = tenant is not None and tenant.tariff_plan_id is not None
+
+    bot_exists = (
+        await db.execute(
+            select(
+                exists().where(
+                    TelegramBot.tenant_id == tenant_id,
+                    TelegramBot.is_active.is_(True),
+                )
+            )
+        )
+    ).scalar()
+    telegram_bot_registered = bool(bot_exists)
+
+    bot_with_webhook = (
+        await db.execute(
+            select(TelegramBot)
+            .where(
+                TelegramBot.tenant_id == tenant_id,
+                TelegramBot.is_active.is_(True),
+                TelegramBot.webhook_status == WebhookProvisioningStatus.ACTIVE,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    webhook_provisioned = bot_with_webhook is not None
+
+    flags = await compute_tenant_readiness(db, tenant_id)
+    readiness_ok = bool(flags.get("booking_ready", False))
+
+    onboarding_complete = (
+        tenant_created
+        and tariff_assigned
+        and telegram_bot_registered
+        and webhook_provisioned
+        and readiness_ok
+    )
+
+    missing_steps: list[str] = []
+    if not tenant_created:
+        missing_steps.append("tenant_created")
+    if not tariff_assigned:
+        missing_steps.append("tariff_assigned")
+    if not telegram_bot_registered:
+        missing_steps.append("telegram_bot_registered")
+    if not webhook_provisioned:
+        missing_steps.append("webhook_provisioned")
+    if not readiness_ok:
+        missing_steps.append("readiness_ok")
+
+    return {
+        "tenant_created": tenant_created,
+        "tariff_assigned": tariff_assigned,
+        "telegram_bot_registered": telegram_bot_registered,
+        "webhook_provisioned": webhook_provisioned,
+        "readiness_ok": readiness_ok,
+        "onboarding_complete": onboarding_complete,
+        "missing_steps": missing_steps,
+    }
+
+
 async def get_webhook_operational_state(db: AsyncSession, tenant_id: int) -> dict:
     """
     Get webhook provisioning operational state from active bot.

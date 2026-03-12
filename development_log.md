@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-03-12 — SaaS Provisioning / Onboarding Layer
+
+Реализован контур SaaS Provisioning / Onboarding:
+
+- **Step 1:** Контракт создания tenant: `backend/app/schemas/tenant_provisioning.py` — TenantCreateRequest (name, slug, contact_email optional), TenantCreateResponse (id, name, slug, status). tenant create contract added
+- **Step 2:** POST /api/v1/tenants создаёт tenant со статусом PENDING, возвращает id, name, slug, status (+ расширенный ответ при full provisioning). tenant create endpoint added
+- **Step 3:** Уникальность slug: проверка в create_tenant; при дубликате 409 Conflict, detail с id существующего tenant. tenant create uniqueness guarded
+- **Step 4:** POST /api/v1/tenants/{tenant_id}/tariff — назначение тарифа (tariff_plan_id или tariff_code). tenant tariff assignment added
+- **Step 5:** Контракт бота: TelegramBotRegisterRequest (bot_token, bot_username, display_name optional, is_active), TelegramBotRegisterResponse. telegram bot registration contract added
+- **Step 6:** POST /api/v1/tenants/{tenant_id}/bots (и alias .../telegram-bots); upsert, без дубликата по tenant. telegram bot registration endpoint added
+- **Step 7:** Сервис provision_telegram_webhook в `backend/app/services/telegram_webhook_service.py` (уже был). webhook provisioning service added
+- **Step 8:** POST /api/v1/tenants/{tenant_id}/bots/{bot_id}/webhook — генерация secret при необходимости, вызов provision_telegram_webhook, ответ webhook_url, webhook_secret_present. webhook provisioning endpoint added
+- **Step 9:** GET /api/v1/tenants/{tenant_id}/onboarding — tenant_created, tariff_assigned, telegram_bot_registered, webhook_provisioned, readiness_ok, onboarding_complete, missing_steps. onboarding state endpoint added
+- **Step 10:** finalize_tenant_onboarding() в `backend/app/services/onboarding_service.py`; POST .../onboarding/finalize переводит tenant в ACTIVE при полном onboarding. onboarding finalization added
+- **Step 11:** Retry-safe: дубликат slug 409; повторная регистрация бота — upsert; повторный webhook provisioning — обновление secret и setWebhook. provisioning retry safety added
+- **Step 12:** Тесты в `backend/tests/test_saas_provisioning.py` (10 тестов). saas provisioning tests passed
+
 ## 2026-03-11 — Tenant Lifecycle / Billing Control Layer
 
 Реализован слой Tenant Lifecycle / Billing Control:
