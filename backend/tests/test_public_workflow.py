@@ -536,6 +536,224 @@ async def test_public_reschedule_forbidden_status_returns_422(
 
 
 @pytest.mark.asyncio
+async def test_public_cancel_success_returns_snapshot_and_creates_history(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    assert svc_res.status_code == 200
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 51001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Cancel User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    cancel_res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "client changed plans"},
+    )
+    assert cancel_res.status_code == 200
+    data = cancel_res.json()
+    assert data["appointment_id"] == appt_id
+    assert data["tenant_id"] == 1
+    assert data["cancelled"] is True
+    assert data["status"] == "CANCELLED"
+    assert data["snapshot"]["status"] == "CANCELLED"
+
+    await db_session.commit()
+    hist_stmt = select(AppointmentHistory).where(
+        and_(
+            AppointmentHistory.appointment_id == appt_id,
+            AppointmentHistory.tenant_id == 1,
+            AppointmentHistory.new_status == AppointmentStatus.CANCELLED.value,
+        )
+    )
+    hist = (await db_session.execute(hist_stmt)).scalars().all()
+    assert len(hist) >= 1
+    assert any(h.source == "public_api" for h in hist)
+    assert any(h.reason == "client changed plans" for h in hist)
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_access_denied_for_foreign_appointment(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_owner = 52001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_owner,
+            "full_name": "Owner",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    cancel_res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": 52002},
+        json={"reason": "attack"},
+    )
+    assert cancel_res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_appointment_not_found_returns_404(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/999999/cancel",
+        params={"telegram_id": 1},
+        json={"reason": "n/a"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_forbidden_status_returns_422(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 53001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Forbidden Cancel",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    appt = await db_session.get(Appointment, appt_id)
+    assert appt is not None
+    appt.status = AppointmentStatus.COMPLETED
+    await db_session.commit()
+
+    cancel_res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "try cancel completed"},
+    )
+    assert cancel_res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_already_cancelled_is_idempotent_and_does_not_duplicate_history(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 54001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Idempotent Cancel",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    r1 = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "first"},
+    )
+    assert r1.status_code == 200
+    assert r1.json()["status"] == "CANCELLED"
+
+    r2 = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "second"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "CANCELLED"
+
+    await db_session.commit()
+    hist_stmt = select(AppointmentHistory).where(
+        and_(
+            AppointmentHistory.appointment_id == appt_id,
+            AppointmentHistory.tenant_id == 1,
+            AppointmentHistory.new_status == AppointmentStatus.CANCELLED.value,
+            AppointmentHistory.source == "public_api",
+        )
+    )
+    hist = (await db_session.execute(hist_stmt)).scalars().all()
+    assert len(hist) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_tenant_isolation_returns_404(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 55001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Tenant1 Appt",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    tenant2 = Tenant(id=2, name="Tenant 2", status=TenantStatus.ACTIVE, tariff_plan_id=1)
+    db_session.add(tenant2)
+    await db_session.commit()
+
+    appt = await db_session.get(Appointment, appt_id)
+    assert appt is not None
+    appt.tenant_id = 2
+    await db_session.commit()
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "should not find"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_public_reschedule_tenant_isolation_returns_404(
     client: AsyncClient, db_session: AsyncSession
 ):

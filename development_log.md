@@ -2143,3 +2143,13 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Public-safe error mapping: 404 not found, 403 no access, 409 slot conflict, 422 invalid interval / forbidden status.
 - Audit consistency: history event created via lifecycle service (event_type="rescheduled", payload old/new times, source, reason).
 - Regression slice: backend/tests/test_public_workflow.py reschedule scenarios added; pytest backend/tests/test_public_workflow.py passed.
+
+## 2026-03-12 — Client Self-Service Cancel Layer (Public)
+
+- Public cancel contract: reused `AppointmentCancelResponse` and added minimal `AppointmentCancelRequest(reason?: str)` in backend/app/schemas/appointment_snapshot.py (no duplicate public schema file).
+- Public cancel access reuse: public endpoint uses existing `_require_public_appointment_access` (appointment_id + tenant slug context + telegram_id binding).
+- Public cancel endpoint + lifecycle wiring: POST /api/v1/{slug}/appointments/public/{appointment_id}/cancel calls appointment_lifecycle_service.cancel_appointment(source="public_api", changed_by_user_id=None, reason passthrough) and returns updated snapshot.
+- Public-safe error mapping: 404 not found, 403 no access, 422 forbidden status; already-cancelled is idempotent 200 with CANCELLED snapshot (no duplicate history).
+- Audit consistency: cancel history written only via lifecycle service (AppointmentHistory: event_type="cancelled", old_status, new_status, source="public_api", reason, changed_by_user_id=None).
+- Snapshot consistency: response returns lifecycle snapshot after cancel (status="CANCELLED").
+- Regression slice: `pytest -q tests/test_public_workflow.py` passed (includes public cancel scenarios).

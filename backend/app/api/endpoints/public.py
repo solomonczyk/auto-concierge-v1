@@ -38,13 +38,17 @@ from app.services.outbox_service import enqueue_appointment_created_event, enque
 from app.services.redis_service import RedisService
 from app.services.usage_service import check_appointments_limit, LimitExceededError
 from app.services.appointment_lifecycle_service import (
+    cancel_appointment,
     reschedule_appointment,
     AppointmentNotFoundError,
+    CancelForbiddenError,
     RescheduleForbiddenError,
     RescheduleSlotConflictError,
     RescheduleValidationError,
 )
 from app.schemas.appointment_snapshot import (
+    AppointmentCancelRequest,
+    AppointmentCancelResponse,
     AppointmentRescheduleRequest,
     AppointmentRescheduleResponse,
 )
@@ -94,6 +98,48 @@ async def _require_public_appointment_access(
         raise HTTPException(status_code=404, detail="Запись не найдена")
     if int(row.telegram_id or 0) != int(telegram_id):
         raise HTTPException(status_code=403, detail="Нет доступа к записи")
+
+
+async def _cancel_public_appointment(
+    *,
+    db: AsyncSession,
+    tenant_id: int,
+    appointment_id: int,
+    telegram_id: int,
+    payload: AppointmentCancelRequest,
+) -> AppointmentCancelResponse:
+    await _require_public_appointment_access(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        telegram_id=telegram_id,
+    )
+
+    try:
+        snapshot, transitioned, old_status = await cancel_appointment(
+            db,
+            appointment_id,
+            tenant_id,
+            changed_by_user_id=None,
+            source="public_api",
+            reason=payload.reason,
+        )
+    except AppointmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    except CancelForbiddenError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Недопустимый статус для отмены",
+        )
+
+    cancelled = snapshot.status == "CANCELLED"
+    return AppointmentCancelResponse(
+        appointment_id=snapshot.appointment_id,
+        tenant_id=snapshot.tenant_id,
+        status=snapshot.status,
+        cancelled=cancelled,
+        snapshot=snapshot,
+    )
 
 
 def _upsert_appointment_auto_snapshot(
@@ -885,70 +931,38 @@ async def cancel_public_appointment(
     tenant_id: int = Depends(get_tenant_id_by_slug),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Client)
-        .where(
-            and_(
-                Client.telegram_id == telegram_id,
-                Client.tenant_id == tenant_id,
-                Client.deleted_at.is_(None),
-            )
-        )
+    await _require_public_appointment_access(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        telegram_id=telegram_id,
     )
-    result = await db.execute(stmt)
-    client = result.scalar_one_or_none()
-    if not client:
-        raise HTTPException(status_code=404, detail="Клиент не найден")
 
-    appt_stmt = (
-        select(Appointment)
-        .where(
-            and_(
-                Appointment.id == appointment_id,
-                Appointment.client_id == client.id,
-                Appointment.tenant_id == tenant_id,
-                Appointment.deleted_at.is_(None),
-            )
+    try:
+        snapshot, transitioned, old_status = await cancel_appointment(
+            db,
+            appointment_id,
+            tenant_id,
+            changed_by_user_id=None,
+            source="public_api",
+            reason=None,
         )
-    )
-    appt_result = await db.execute(appt_stmt)
-    appt = appt_result.scalar_one_or_none()
-    if not appt:
+    except AppointmentNotFoundError:
         raise HTTPException(status_code=404, detail="Запись не найдена")
-
-    if appt.status in TERMINAL_STATUSES:
+    except CancelForbiddenError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Запись уже в финальном статусе и не может быть отменена",
+            detail="Недопустимый статус для отмены",
         )
 
-    old_status = appt.status
-    appt.status = AppointmentStatus.CANCELLED
-
-    db.add(
-        AppointmentHistory(
-            appointment_id=appt.id,
-            tenant_id=tenant_id,
-            old_status=old_status.value,
-            new_status=AppointmentStatus.CANCELLED.value,
-            changed_by_user_id=None,
-            source="public",
-        )
-    )
-
-    await enqueue_appointment_updated_event(
-        db,
-        tenant_id=tenant_id,
-        appointment_id=appt.id,
-    )
-
-    await db.commit()
+    if snapshot.status == "CANCELLED":
+        await enqueue_appointment_updated_event(db, tenant_id=tenant_id, appointment_id=appointment_id)
 
     stmt_refresh = (
         select(Appointment)
         .where(
             and_(
-                Appointment.id == appt.id,
+                Appointment.id == appointment_id,
                 Appointment.tenant_id == tenant_id,
             )
         )
@@ -959,11 +973,11 @@ async def cancel_public_appointment(
         )
     )
     refreshed = (await db.execute(stmt_refresh)).scalar_one_or_none()
-    if refreshed:
-        appt = refreshed
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
 
-    _enrich_appointment_auto_fields(appt)
-    return appt
+    _enrich_appointment_auto_fields(refreshed)
+    return refreshed
 
 
 # ─── POST /appointments/public/{id}/reschedule ────────────────────────────────
@@ -1042,6 +1056,31 @@ async def reschedule_public_appointment(
         new_end_time=payload.new_end_time,
         status=snapshot.status,
         snapshot=snapshot,
+    )
+
+
+# ─── POST /appointments/public/{id}/cancel ────────────────────────────────────
+
+@router.post(
+    "/appointments/public/{appointment_id}/cancel",
+    response_model=AppointmentCancelResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("30/minute")
+async def cancel_public_appointment_v1(
+    request: Request,
+    appointment_id: int,
+    payload: AppointmentCancelRequest,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _cancel_public_appointment(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        telegram_id=telegram_id,
+        payload=payload,
     )
 
 

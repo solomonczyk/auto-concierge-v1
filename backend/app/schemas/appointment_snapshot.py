@@ -57,6 +57,11 @@ class AppointmentCancelResponse(BaseModel):
     snapshot: AppointmentSnapshotResponse
 
 
+class AppointmentCancelRequest(BaseModel):
+    """Request for cancelling an appointment (operator + public flows)."""
+    reason: Optional[str] = None
+
+
 class AppointmentRescheduleRequest(BaseModel):
     """Request for POST /appointments/{id}/reschedule."""
     new_start_time: datetime

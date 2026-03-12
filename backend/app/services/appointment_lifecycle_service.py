@@ -118,6 +118,7 @@ async def cancel_appointment(
         AppointmentHistory(
             appointment_id=appt.id,
             tenant_id=tenant_id,
+            event_type="cancelled",
             old_status=old_status.value,
             new_status=AppointmentStatus.CANCELLED.value,
             changed_by_user_id=changed_by_user_id,
