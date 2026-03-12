@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone as tz
 from zoneinfo import ZoneInfo
@@ -7,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, delete
 from sqlalchemy.orm import joinedload, selectinload
-from app.db.session import get_db
+from app.db.session import get_db, async_session_local
 from app.api import deps
 from app.models.models import Appointment, AppointmentHistory, AppointmentStatus, Client, IntegrationStatus, Service, User, UserRole, Tenant, TariffPlan, TenantSettings
+from app.models.appointment_intake import AppointmentIntake, APPOINTMENT_INTAKE_ALLOWED_STATUSES
 from app.models.auto_extensions import ClientAutoProfile, AppointmentAutoSnapshot
 from app.services.redis_service import RedisService 
 from app.services.external_integration_service import external_integration
@@ -23,12 +25,19 @@ from app.core.metrics import (
 )
 from app.bot.tenant import get_tenant_shop
 from app.schemas.appointment_history import AppointmentHistoryRead
+from app.schemas.appointment_intake import AppointmentIntakeRead
 from app.services.usage_service import check_appointments_limit, LimitExceededError
 from app.services.audit_service import log_audit
-from app.services.outbox_service import enqueue_appointment_created_event
-from app.services.appointment_integration_service import run_appointment_integration_sync
+from app.services.outbox_service import enqueue_appointment_created_event, enqueue_appointment_updated_event
+from app.services.appointment_snapshot_service import get_appointment_snapshot
+from app.services.appointment_lifecycle_service import (
+    cancel_appointment,
+    CancelForbiddenError,
+    AppointmentNotFoundError,
+)
+from app.schemas.appointment_snapshot import AppointmentSnapshotResponse, AppointmentCancelResponse
 from app.core.rate_limit import PUBLIC_BOOKING_RATE_LIMIT, limiter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +85,7 @@ def _upsert_appointment_auto_snapshot(
             vin=vin,
         )
         db.add(sn)
+        setattr(appt, "auto_snapshot", sn)
     else:
         if car_make is not None:
             sn.car_make = car_make
@@ -144,6 +154,7 @@ class AppointmentRead(BaseModel):
     created_at: Optional[datetime] = None
     client: Optional[ClientShort] = None
     service: Optional[ServiceShort] = None
+    intake: Optional[AppointmentIntakeRead] = None
 
     class Config:
         from_attributes = True
@@ -176,6 +187,20 @@ class AppointmentUpdate(BaseModel):
     auto_info: Optional[AppointmentAutoInfo] = None
 
 
+class AppointmentIntakeStatus(str, Enum):
+    pending = "pending"
+    in_progress = "in_progress"
+    completed = "completed"
+
+
+class AppointmentIntakeStatusUpdate(BaseModel):
+    status: AppointmentIntakeStatus
+
+
+class AppointmentIntakeAnswersUpdate(BaseModel):
+    answers_json: Optional[str] = Field(default=None, max_length=10000)
+
+
 @router.patch("/{id}", response_model=AppointmentRead)
 async def update_appointment(
     id: int,
@@ -185,7 +210,8 @@ async def update_appointment(
     current_user: User = Depends(deps.get_current_active_user),
 ):
     stmt = select(Appointment).options(
-        selectinload(Appointment.auto_snapshot)
+        selectinload(Appointment.auto_snapshot),
+        selectinload(Appointment.intake),
     ).where(
         and_(Appointment.id == id, Appointment.tenant_id == tenant_id, _NOT_DELETED)
     )
@@ -216,14 +242,32 @@ async def update_appointment(
     ai_vin = ai.vin if ai else None
     _upsert_appointment_auto_snapshot(db, appt, ai_make, ai_year, ai_vin)
 
+    await log_audit(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=current_user.id,
+        action="update",
+        entity_type="appointment",
+        entity_id=str(appt.id),
+        payload_after={"id": appt.id, "service_id": appt.service_id, "start_time": appt.start_time.isoformat()},
+        source="dashboard",
+    )
+
+    await enqueue_appointment_updated_event(
+        db,
+        tenant_id=tenant_id,
+        appointment_id=appt.id,
+    )
+
     await db.commit()
-    
+
     # Re-fetch with relations to avoid lazy load errors in response validation
     try:
         stmt = select(Appointment).options(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         ).where(Appointment.id == id)
         result = await db.execute(stmt)
         refreshed_appt = result.scalar_one_or_none()
@@ -241,27 +285,6 @@ async def update_appointment(
             id,
             tenant_id,
             reread_error,
-        )
-
-    try:
-        await log_audit(
-            db,
-            tenant_id=tenant_id,
-            actor_user_id=current_user.id,
-            action="update",
-            entity_type="appointment",
-            entity_id=str(appt.id),
-            payload_after={"id": appt.id, "service_id": appt.service_id, "start_time": appt.start_time.isoformat()},
-            source="dashboard",
-        )
-        await db.commit()
-    except Exception as audit_error:
-        await db.rollback()
-        logger.error(
-            "Appointment patch audit commit failed after update appointment_id=%s tenant_id=%s: %s",
-            appt.id,
-            tenant_id,
-            audit_error,
         )
 
     # Broadcast update
@@ -376,8 +399,14 @@ async def create_appointment(
         )
         
         db.add(new_appt)
-        await db.commit()
-        
+        await db.flush()
+
+        intake = AppointmentIntake(
+            appointment_id=new_appt.id,
+            status="pending",
+        )
+        db.add(intake)
+
         # Re-fetch with relations to avoid lazy load errors in response validation
         final_appt = new_appt
         try:
@@ -385,6 +414,7 @@ async def create_appointment(
                 joinedload(Appointment.client),
                 joinedload(Appointment.service),
                 selectinload(Appointment.auto_snapshot),
+                selectinload(Appointment.intake),
             ).where(Appointment.id == new_appt.id)
             result = await db.execute(stmt)
             refreshed_appt = result.scalar_one_or_none()
@@ -443,7 +473,7 @@ async def create_appointment(
             await enqueue_appointment_created_event(
                 db,
                 tenant_id=tenant_id,
-                appointment_id=final_appt.id,
+                appointment_id=new_appt.id,
             )
             await db.commit()
         except Exception as history_audit_error:
@@ -500,6 +530,7 @@ async def update_appointment_status(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
         selectinload(Appointment.auto_snapshot),
+        selectinload(Appointment.intake),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
 
     result = await db.execute(stmt)
@@ -543,6 +574,12 @@ async def update_appointment_status(
         reason=reason,
     ))
 
+    await enqueue_appointment_updated_event(
+        db,
+        tenant_id=tenant_id,
+        appointment_id=appt.id,
+    )
+
     await db.commit()
 
     try:
@@ -550,6 +587,7 @@ async def update_appointment_status(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
         refreshed_result = await db.execute(refreshed_stmt)
         refreshed_appt = refreshed_result.scalar_one_or_none()
@@ -569,22 +607,6 @@ async def update_appointment_status(
             reread_error,
         )
 
-    try:
-        integration_appt = await run_appointment_integration_sync(
-            db=db,
-            appointment_id=appt.id,
-            tenant_id=tenant_id,
-        )
-        if integration_appt is not None:
-            appt = integration_appt
-    except Exception as integration_error:
-        logger.error(
-            "Appointment status update integration sync failed after commit appointment_id=%s tenant_id=%s: %s",
-            appt.id,
-            tenant_id,
-            integration_error,
-        )
-
     from app.services.notification_service import NotificationService, STATUS_TO_NOTIFICATION_EVENT
 
     notification_event = STATUS_TO_NOTIFICATION_EVENT.get(target.value)
@@ -593,18 +615,20 @@ async def update_appointment_status(
 
         async def notify_via_dispatch():
             try:
-                await NotificationService.dispatch(
-                    event_type=notification_event,
-                    appointment_id=appt.id,
-                    tenant_id=tenant_id,
-                    recipient_roles=["client"],
-                    recipient_ids={"client_telegram_id": appt.client.telegram_id},
-                    context={
-                        "old_status": old_status.value,
-                        "new_status": target.value,
-                        "service_name": appt.service.name if appt.service else None,
-                    },
-                )
+                async with async_session_local() as db:
+                    await NotificationService.dispatch(
+                        db,
+                        event_type=notification_event,
+                        appointment_id=appt.id,
+                        tenant_id=tenant_id,
+                        recipient_roles=["client"],
+                        recipient_ids={"client_telegram_id": appt.client.telegram_id},
+                        context={
+                            "old_status": old_status.value,
+                            "new_status": target.value,
+                            "service_name": appt.service.name if appt.service else None,
+                        },
+                    )
             except NotImplementedError:
                 logger.warning(
                     "NotificationService.dispatch not wired yet for appointment %s",
@@ -697,6 +721,7 @@ async def read_appointments(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .where(and_(Appointment.tenant_id == tenant_id, _NOT_DELETED))
         .offset(skip)
@@ -759,6 +784,7 @@ async def read_appointments_today(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .where(
             and_(
@@ -796,6 +822,7 @@ async def read_appointments_terminal(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .where(
             and_(
@@ -837,6 +864,7 @@ async def read_appointments_kanban(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .where(
             and_(
@@ -911,6 +939,77 @@ async def read_appointment_history(
     ]
 
 
+@router.get("/{appointment_id}/snapshot", response_model=AppointmentSnapshotResponse)
+async def read_appointment_snapshot(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    """
+    Canonical read-model snapshot for an appointment.
+    Single source of truth for operator UI, reminders, reschedule/cancel, support.
+    """
+    snapshot = await get_appointment_snapshot(db, appointment_id, tenant_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return snapshot
+
+
+@router.post(
+    "/{appointment_id}/cancel",
+    response_model=AppointmentCancelResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cancel_appointment_endpoint(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+    current_user: User = Depends(deps.require_role([UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.MANAGER, UserRole.STAFF])),
+):
+    """
+    Cancel appointment. Canonical lifecycle action.
+    All future flows (WebApp, dashboard, self-service) must use this endpoint.
+    """
+    try:
+        snapshot, transitioned, old_status_val = await cancel_appointment(
+            db,
+            appointment_id,
+            tenant_id,
+            changed_by_user_id=current_user.id,
+            source="dashboard",
+        )
+    except AppointmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    except CancelForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+    if transitioned:
+        await enqueue_appointment_updated_event(db, tenant_id=tenant_id, appointment_id=appointment_id)
+        await db.commit()
+        try:
+            redis = RedisService.get_redis()
+            payload = {
+                "type": "appointment_status_updated",
+                "appointment_id": appointment_id,
+                "old_status": old_status_val or "unknown",
+                "new_status": "cancelled",
+            }
+            await redis.publish(f"appointments_updates:{tenant_id}", json.dumps(payload))
+        except Exception as redis_err:
+            logger.warning("Cancel: redis publish failed: %s", redis_err)
+
+    return AppointmentCancelResponse(
+        appointment_id=snapshot.appointment_id,
+        tenant_id=snapshot.tenant_id,
+        status=snapshot.status,
+        cancelled=True,
+        snapshot=snapshot,
+    )
+
+
 @router.get("/{appointment_id}", response_model=AppointmentRead)
 async def read_appointment(
     appointment_id: int,
@@ -927,6 +1026,7 @@ async def read_appointment(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         )
         .where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id, _NOT_DELETED))
     )
@@ -937,6 +1037,103 @@ async def read_appointment(
         raise HTTPException(status_code=404, detail="Appointment not found")
     _enrich_appointment_auto_fields(appt)
     return appt
+
+
+@router.get("/{appointment_id}/intake", response_model=AppointmentIntakeRead)
+async def read_appointment_intake(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    stmt = select(Appointment).options(
+        selectinload(Appointment.intake),
+    ).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if not appt.intake:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    return appt.intake
+
+
+@router.patch("/{appointment_id}/intake", response_model=AppointmentRead)
+async def update_appointment_intake_status(
+    appointment_id: int,
+    payload: AppointmentIntakeStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    stmt = select(Appointment).options(
+        selectinload(Appointment.intake),
+    ).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if not appt.intake:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    if payload.status not in APPOINTMENT_INTAKE_ALLOWED_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid intake status")
+    appt.intake.status = payload.status
+    await db.commit()
+    await db.refresh(appt.intake)
+    stmt = select(Appointment).options(
+        joinedload(Appointment.client),
+        joinedload(Appointment.service),
+        selectinload(Appointment.auto_snapshot),
+        selectinload(Appointment.intake),
+    ).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one()
+    _enrich_appointment_auto_fields(appt)
+    return appt
+
+
+@router.patch("/{appointment_id}/intake/answers", response_model=AppointmentIntakeRead)
+async def update_appointment_intake_answers(
+    appointment_id: int,
+    payload: AppointmentIntakeAnswersUpdate,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+):
+    stmt = select(Appointment).options(
+        selectinload(Appointment.intake),
+    ).where(
+        and_(
+            Appointment.id == appointment_id,
+            Appointment.tenant_id == tenant_id,
+            _NOT_DELETED,
+        )
+    )
+    result = await db.execute(stmt)
+    appt = result.scalar_one_or_none()
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if not appt.intake:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    appt.intake.answers_json = payload.answers_json
+    await db.commit()
+    await db.refresh(appt.intake)
+    return appt.intake
 
 
 @router.put("/{appointment_id}", response_model=AppointmentRead)
@@ -953,6 +1150,7 @@ async def put_appointment(
     """
     stmt = select(Appointment).options(
         selectinload(Appointment.auto_snapshot),
+        selectinload(Appointment.intake),
     ).where(
         and_(
             Appointment.id == appointment_id,
@@ -1007,12 +1205,19 @@ async def put_appointment(
     ai_vin = ai.vin if ai else None
     _upsert_appointment_auto_snapshot(db, appt, ai_make, ai_year, ai_vin)
 
+    await enqueue_appointment_updated_event(
+        db,
+        tenant_id=tenant_id,
+        appointment_id=appt.id,
+    )
+
     await db.commit()
 
     stmt = select(Appointment).options(
         joinedload(Appointment.client),
         joinedload(Appointment.service),
         selectinload(Appointment.auto_snapshot),
+        selectinload(Appointment.intake),
     ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
     result = await db.execute(stmt)
     refreshed_appt = result.scalar_one_or_none()
@@ -1024,29 +1229,6 @@ async def put_appointment(
             appointment_id,
             tenant_id,
         )
-
-    integration_appt = await run_appointment_integration_sync(
-        db=db,
-        appointment_id=appt.id,
-        tenant_id=tenant_id,
-    )
-    stmt = select(Appointment).options(
-        joinedload(Appointment.client),
-        joinedload(Appointment.service),
-        selectinload(Appointment.auto_snapshot),
-    ).where(and_(Appointment.id == appointment_id, Appointment.tenant_id == tenant_id))
-    result = await db.execute(stmt)
-    appt = result.scalar_one_or_none() or integration_appt
-
-    # Fail-safe: if integration_appt was used and has no auto_snapshot loaded, fetch it
-    if getattr(appt, "auto_snapshot", None) is None:
-        stmt_sn = select(AppointmentAutoSnapshot).where(
-            AppointmentAutoSnapshot.appointment_id == appt.id
-        )
-        result_sn = await db.execute(stmt_sn)
-        snapshot = result_sn.scalar_one_or_none()
-        if snapshot is not None:
-            appt.auto_snapshot = snapshot
 
     try:
         redis = RedisService.get_redis()
@@ -1300,6 +1482,7 @@ async def create_public_appointment(
             joinedload(Appointment.client),
             joinedload(Appointment.service),
             selectinload(Appointment.auto_snapshot),
+            selectinload(Appointment.intake),
         ).where(and_(Appointment.id == appt.id, Appointment.tenant_id == tenant_id))
         result = await db.execute(stmt)
         appt = result.scalar_one()
@@ -1325,23 +1508,29 @@ async def create_public_appointment(
                 recipient_roles = ["client"]
                 if not payload.is_waitlist and settings.ADMIN_CHAT_ID and str(settings.ADMIN_CHAT_ID) != str(payload.telegram_id):
                     recipient_roles.append("manager")
+
                 recipient_ids = {"client_telegram_id": payload.telegram_id}
+
                 if settings.ADMIN_CHAT_ID:
                     recipient_ids["manager_chat_id"] = settings.ADMIN_CHAT_ID
-                await NotificationService.dispatch(
-                    event_type="appointment_created",
-                    appointment_id=appt.id,
-                    tenant_id=tenant_id,
-                    recipient_roles=recipient_roles,
-                    recipient_ids=recipient_ids,
-                    context={
-                        "service_name": service.name,
-                        "slot_time": time_str,
-                        "date_str": start_time_naive.strftime("%d.%m.%Y"),
-                        "is_waitlist": payload.is_waitlist,
-                        "client_name": payload.full_name,
-                    },
-                )
+
+                async with async_session_local() as db:
+                    await NotificationService.dispatch(
+                        db,
+                        event_type="appointment_created",
+                        appointment_id=appt.id,
+                        tenant_id=tenant_id,
+                        recipient_roles=recipient_roles,
+                        recipient_ids=recipient_ids,
+                        context={
+                            "service_name": service.name,
+                            "slot_time": time_str,
+                            "date_str": start_time_naive.strftime("%d.%m.%Y"),
+                            "is_waitlist": payload.is_waitlist,
+                            "client_name": payload.full_name,
+                        },
+                    )
+
             except Exception as e:
                 logger.error(f"Notification error: {e}")
 

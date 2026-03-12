@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-03-12 — Client Lifecycle Actions Layer (полный контур)
+
+Реализован Client Lifecycle Actions Layer — cancel appointment как канонический lifecycle action:
+
+- **Step 1:** `POST /api/v1/appointments/{appointment_id}/cancel` — endpoint возвращает `AppointmentCancelResponse` (appointment_id, tenant_id, status, cancelled, snapshot). appointment cancel endpoint added
+- **Step 2:** Сервис `cancel_appointment()` в `backend/app/services/appointment_lifecycle_service.py` — без HTTP-логики, возвращает (snapshot, transitioned, old_status). appointment cancel service added
+- **Step 3:** Правила: COMPLETED и NO_SHOW нельзя отменить; CANCELLED → idempotent (возврат snapshot). appointment cancel rules enforced
+- **Step 4:** Переход в CANCELLED записывается в AppointmentHistory. appointment cancel history event added
+- **Step 5:** Response использует `get_appointment_snapshot()`. cancel endpoint returns snapshot
+- **Step 6:** Access: SUPERADMIN, ADMIN, MANAGER, STAFF; 401 без auth. appointment cancel access model enforced
+- **Step 7:** Tenant isolation: чужой tenant → 404. appointment cancel tenant isolation enforced
+- **Step 8:** REMIND_STATUSES = {NEW, CONFIRMED} — CANCELLED исключён. cancel compatible with reminder runtime
+- **Step 9:** Smoke tests: success 200, status CANCELLED, idempotent, other tenant 404, without auth 401, forbidden status 422. appointment cancel smoke tests passed
+- **Step 10:** Контракт зафиксирован в `docs/APPOINTMENT_LIFECYCLE.md` и docstring сервиса. appointment cancel lifecycle contract frozen
+
+## 2026-03-12 — Core Snapshot Layer (полный контур)
+
+Реализован Core Snapshot Layer как единый read-model для записи:
+
+- **Step 1:** `GET /api/v1/appointments/{appointment_id}/snapshot` — нормализованный снимок (appointment_id, tenant_id, status, start_time, end_time, client, service, shop, intake, source, is_waitlist). appointment snapshot endpoint added
+- **Step 2:** Pydantic-схемы: `AppointmentSnapshotResponse`, `AppointmentSnapshotClient`, `AppointmentSnapshotService`, `AppointmentSnapshotShop`, `AppointmentSnapshotIntake` в `backend/app/schemas/appointment_snapshot.py`. appointment snapshot schemas normalized
+- **Step 3:** Read-model service `get_appointment_snapshot()` в `backend/app/services/appointment_snapshot_service.py`. appointment snapshot service added
+- **Step 4:** Eager loading: `joinedload(client, service, shop)`, `selectinload(intake)`; отдельный запрос для source из `AppointmentHistory`. appointment snapshot query optimized
+- **Step 5:** Access: `get_current_tenant_id` — superadmin/tenant admin/operator; без auth → 401. appointment snapshot access model enforced
+- **Step 6:** 404 при not found / tenant mismatch; nullable client/service/shop/intake не ломают endpoint. appointment snapshot safety guards added
+- **Step 7:** Status uppercase, source: WEBAPP|DASHBOARD|API|BOT|SYSTEM; is_waitlist из status. appointment snapshot status contract normalized
+- **Step 8:** Reuse map в `docs/APPOINTMENT_SNAPSHOT_README.md`. snapshot reuse map prepared
+- **Step 9:** Smoke tests в `tests/test_appointments.py` (5 тестов). appointment snapshot smoke tests passed
+- **Step 10:** Contract freeze — docstrings и `docs/APPOINTMENT_SNAPSHOT_README.md`. appointment snapshot contract frozen
+
 ## 2026-03-12 — SaaS Admin / Control Plane Layer (полный контур)
 
 Реализован минимальный Control Plane слой:

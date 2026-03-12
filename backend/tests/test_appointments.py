@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.api.endpoints import appointments as appointments_endpoint
@@ -673,6 +674,40 @@ async def test_today_skip_pagination(
     assert data[0]["id"] == ids_in_order[1], "skip=1&limit=1 must return second record"
 
 
+# ─── Intake status update (PATCH /{id}/intake) ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_operator_updates_intake_status(client_auth: AsyncClient, db_session: AsyncSession):
+    """PATCH /appointments/{id}/intake with status updates AppointmentIntake.status in DB."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T10:00:00",
+            "client_name": "Intake Status Client",
+            "client_phone": "+79991119922",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    patch_res = await client_auth.patch(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/intake",
+        json={"status": "in_progress"},
+    )
+    assert patch_res.status_code == 200
+
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.intake))
+        .where(and_(Appointment.id == appt_id, Appointment.tenant_id == 1))
+    )
+    result = await db_session.execute(stmt)
+    appt = result.scalar_one()
+    assert appt.intake is not None
+    assert appt.intake.status == "in_progress"
+
+
 # ─── Read appointment (GET /{id}) ─────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -799,9 +834,9 @@ async def test_put_appointment_empty_body_returns_200_and_keeps_data(client: Asy
     assert after["service_id"] == before["service_id"]
     assert after["start_time"] == before["start_time"]
     assert after["end_time"] == before["end_time"]
-    assert after.get("car_make") == before.get("car_make")
-    assert after.get("car_year") == before.get("car_year")
-    assert after.get("vin") == before.get("vin")
+    assert after.get("auto_info", {}).get("car_make") == before.get("auto_info", {}).get("car_make")
+    assert after.get("auto_info", {}).get("car_year") == before.get("auto_info", {}).get("car_year")
+    assert after.get("auto_info", {}).get("vin") == before.get("auto_info", {}).get("vin")
 
 
 @pytest.mark.asyncio
@@ -822,9 +857,11 @@ async def test_put_appointment_updates_allowed_fields(client: AsyncClient):
     put_res = await client_auth.put(
         f"{settings.API_V1_STR}/appointments/{appointment_id}",
         json={
-            "car_make": "Honda",
-            "car_year": 2020,
-            "vin": "1HGBH41JXMN109186",
+            "auto_info": {
+                "car_make": "Honda",
+                "car_year": 2020,
+                "vin": "1HGBH41JXMN109186",
+            },
         },
     )
     assert put_res.status_code == 200
@@ -863,9 +900,9 @@ async def test_put_appointment_empty_body_returns_200_and_keeps_data_unchanged(c
     assert after["service_id"] == before["service_id"]
     assert after["start_time"] == before["start_time"]
     assert after["end_time"] == before["end_time"]
-    assert after.get("car_make") == before.get("car_make")
-    assert after.get("car_year") == before.get("car_year")
-    assert after.get("vin") == before.get("vin")
+    assert after.get("auto_info", {}).get("car_make") == before.get("auto_info", {}).get("car_make")
+    assert after.get("auto_info", {}).get("car_year") == before.get("auto_info", {}).get("car_year")
+    assert after.get("auto_info", {}).get("vin") == before.get("auto_info", {}).get("vin")
 
 
 @pytest.mark.asyncio
@@ -1293,6 +1330,284 @@ async def test_appointment_history_empty_returns_200_and_empty_list(
     assert res.status_code == 200
     data = res.json()
     assert data == [], "empty history must return []"
+
+
+# ─── Appointment snapshot (GET /{id}/snapshot) ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_appointment_snapshot_returns_200_and_structure(client: AsyncClient):
+    """GET /appointments/{id}/snapshot returns 200 and expected structure for allowed user."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T15:00:00",
+            "client_name": "Snapshot Test Client",
+            "client_phone": "+79990001111",
+        },
+    )
+    assert create_res.status_code == 200
+    appointment_id = create_res.json()["id"]
+
+    res = await client_auth.get(f"{settings.API_V1_STR}/appointments/{appointment_id}/snapshot")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["appointment_id"] == appointment_id
+    assert data["tenant_id"] == 1
+    assert data["status"] in ("NEW", "new")
+    assert "start_time" in data
+    assert "end_time" in data
+    assert data["is_waitlist"] is False
+    assert "source" in data
+    assert data["client"] is not None
+    assert data["client"]["name"] == "Snapshot Test Client"
+    assert data["service"] is not None
+    assert data["service"]["name"] == "Диагностика ходовой"
+    assert data["shop"] is not None
+    assert data["shop"]["name"] == "Test Shop"
+    assert data["intake"] is not None
+    assert data["intake"]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_appointment_snapshot_returns_404_for_missing(client: AsyncClient):
+    """Snapshot returns 404 when appointment does not exist."""
+    res = await client_auth.get(f"{settings.API_V1_STR}/appointments/999999/snapshot")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_appointment_snapshot_returns_404_for_other_tenant(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Snapshot returns 404 when appointment belongs to another tenant."""
+    from app.models.models import Tenant, TariffPlan
+
+    tariff = (await db_session.execute(select(TariffPlan).limit(1))).scalar_one()
+    shop1 = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service1 = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    client1 = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+
+    tenant_b = Tenant(id=2, name="Tenant B", status="active", tariff_plan_id=tariff.id, slug="tenant-b")
+    db_session.add(tenant_b)
+    await db_session.flush()
+    shop_b = Shop(tenant_id=2, name="Shop B", address="Addr B", phone="+79990000002")
+    db_session.add(shop_b)
+    await db_session.flush()
+    service_b = Service(tenant_id=2, name="Svc B", duration_minutes=30, base_price=500.0)
+    db_session.add(service_b)
+    await db_session.flush()
+    client_b = Client(tenant_id=2, full_name="Client B", phone="+79990000003")
+    db_session.add(client_b)
+    await db_session.flush()
+
+    appt_b = Appointment(
+        tenant_id=2,
+        shop_id=shop_b.id,
+        client_id=client_b.id,
+        service_id=service_b.id,
+        start_time=datetime(2026, 3, 30, 10, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 10, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt_b)
+    await db_session.commit()
+
+    res = await client_auth.get(f"{settings.API_V1_STR}/appointments/{appt_b.id}/snapshot")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_appointment_snapshot_requires_auth(client: AsyncClient, db_session: AsyncSession):
+    """Snapshot returns 401 when not authenticated."""
+    shop = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    test_client = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+    appt = Appointment(
+        tenant_id=1,
+        shop_id=shop.id,
+        client_id=test_client.id,
+        service_id=service.id,
+        start_time=datetime(2026, 3, 30, 14, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 14, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt)
+    await db_session.commit()
+
+    res = await client.get(f"{settings.API_V1_STR}/appointments/{appt.id}/snapshot")
+    assert res.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_appointment_snapshot_nullable_related_does_not_crash(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Snapshot does not crash when related data is missing (e.g. intake)."""
+    shop = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    test_client = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+    appt = Appointment(
+        tenant_id=1,
+        shop_id=shop.id,
+        client_id=test_client.id,
+        service_id=service.id,
+        start_time=datetime(2026, 3, 30, 16, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 16, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt)
+    await db_session.flush()
+    from app.models.appointment_intake import AppointmentIntake
+    intake = AppointmentIntake(appointment_id=appt.id, status="pending")
+    db_session.add(intake)
+    await db_session.commit()
+
+    res = await client_auth.get(f"{settings.API_V1_STR}/appointments/{appt.id}/snapshot")
+    assert res.status_code == 200
+    data = res.json()
+    assert "client" in data
+    assert "service" in data
+    assert "shop" in data
+    assert "intake" in data
+
+
+# ─── POST /{id}/cancel (Client Lifecycle Actions) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_success(client: AsyncClient):
+    """POST /appointments/{id}/cancel returns 200 and status CANCELLED."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "Cancel Success Client",
+            "client_phone": "+79992223333",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client_auth.post(f"{settings.API_V1_STR}/appointments/{appt_id}/cancel")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["appointment_id"] == appt_id
+    assert data["tenant_id"] == 1
+    assert data["status"] == "CANCELLED"
+    assert data["cancelled"] is True
+    assert "snapshot" in data
+    assert data["snapshot"]["status"] == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_idempotent(client: AsyncClient):
+    """Cancel twice returns 200 both times (idempotent)."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T18:00:00",
+            "client_name": "Idempotent Cancel Client",
+            "client_phone": "+79993334444",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    r1 = await client_auth.post(f"{settings.API_V1_STR}/appointments/{appt_id}/cancel")
+    assert r1.status_code == 200
+    assert r1.json()["status"] == "CANCELLED"
+
+    r2 = await client_auth.post(f"{settings.API_V1_STR}/appointments/{appt_id}/cancel")
+    assert r2.status_code == 200
+    assert r2.json()["status"] == "CANCELLED"
+    assert r2.json()["cancelled"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_other_tenant_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Cancel returns 404 when appointment belongs to another tenant."""
+    from app.models.models import Tenant, TariffPlan
+
+    tariff = (await db_session.execute(select(TariffPlan).limit(1))).scalar_one()
+    shop_b = Shop(tenant_id=2, name="Shop B2", address="Addr B2", phone="+79990000004")
+    db_session.add(Tenant(id=2, name="Tenant B2", status="active", tariff_plan_id=tariff.id, slug="tb2"))
+    await db_session.flush()
+    db_session.add(shop_b)
+    await db_session.flush()
+    svc_b = Service(tenant_id=2, name="Svc B2", duration_minutes=30, base_price=500.0)
+    db_session.add(svc_b)
+    await db_session.flush()
+    cli_b = Client(tenant_id=2, full_name="Client B2", phone="+79990000005")
+    db_session.add(cli_b)
+    await db_session.flush()
+    appt_b = Appointment(
+        tenant_id=2,
+        shop_id=shop_b.id,
+        client_id=cli_b.id,
+        service_id=svc_b.id,
+        start_time=datetime(2026, 3, 30, 12, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 12, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt_b)
+    await db_session.commit()
+
+    res = await client_auth.post(f"{settings.API_V1_STR}/appointments/{appt_b.id}/cancel")
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_without_auth(client: AsyncClient, db_session: AsyncSession):
+    """Cancel returns 401 when not authenticated."""
+    shop = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    test_client = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+    appt = Appointment(
+        tenant_id=1,
+        shop_id=shop.id,
+        client_id=test_client.id,
+        service_id=service.id,
+        start_time=datetime(2026, 3, 30, 19, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 19, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt)
+    await db_session.commit()
+
+    res = await client.post(f"{settings.API_V1_STR}/appointments/{appt.id}/cancel")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_forbidden_status(client: AsyncClient, db_session: AsyncSession):
+    """Cancel returns 422 when appointment is COMPLETED or NO_SHOW."""
+    shop = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    test_client = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+
+    for status_val in (AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW):
+        appt = Appointment(
+            tenant_id=1,
+            shop_id=shop.id,
+            client_id=test_client.id,
+            service_id=service.id,
+            start_time=datetime(2026, 3, 30, 20, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 3, 30, 20, 30, 0, tzinfo=timezone.utc),
+            status=status_val,
+        )
+        db_session.add(appt)
+        await db_session.commit()
+        res = await client_auth.post(f"{settings.API_V1_STR}/appointments/{appt.id}/cancel")
+        assert res.status_code == 422
+        data = res.json()
+        assert "detail" in data
 
 
 # ─── PATCH status ─────────────────────────────────────────────────────────────
