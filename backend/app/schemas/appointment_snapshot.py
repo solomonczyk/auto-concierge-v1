@@ -9,7 +9,7 @@ their own read model from multiple endpoints.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -46,6 +46,8 @@ class AppointmentSnapshotResponse(BaseModel):
     intake: Optional[AppointmentSnapshotIntake] = None
     source: str
     is_waitlist: bool
+    can_reschedule: bool
+    can_cancel: bool
 
 
 class AppointmentCancelResponse(BaseModel):
@@ -67,6 +69,15 @@ class AppointmentRescheduleRequest(BaseModel):
     new_start_time: datetime
     new_end_time: datetime
     reason: Optional[str] = None
+
+
+class PublicAppointmentListPage(BaseModel):
+    """Paged response for GET /appointments/public (list)."""
+    items: List[AppointmentSnapshotResponse]
+    limit: int
+    offset: int
+    total: int
+    has_more: bool
 
 
 class AppointmentRescheduleResponse(BaseModel):

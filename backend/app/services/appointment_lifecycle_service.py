@@ -16,18 +16,15 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.models import Appointment, AppointmentHistory, AppointmentStatus
 from app.services.appointment_snapshot_service import get_appointment_snapshot
+from app.services.appointment_lifecycle_rules import (
+    CANCEL_FORBIDDEN_STATUSES,
+    RESCHEDULE_FORBIDDEN_STATUSES,
+)
 from app.schemas.appointment_snapshot import AppointmentSnapshotResponse
 
 
 CancelResult = tuple[AppointmentSnapshotResponse, bool, str | None]
 """ (snapshot, transitioned, old_status). old_status set only when transitioned. """
-
-
-# Statuses that cannot be cancelled
-CANCEL_FORBIDDEN_STATUSES = frozenset({
-    AppointmentStatus.COMPLETED,
-    AppointmentStatus.NO_SHOW,
-})
 
 
 class CancelForbiddenError(Exception):
@@ -53,14 +50,6 @@ class RescheduleSlotConflictError(Exception):
 class RescheduleValidationError(Exception):
     """Invalid time range (new_start_time >= new_end_time)."""
     pass
-
-
-# Statuses that cannot be rescheduled
-RESCHEDULE_FORBIDDEN_STATUSES = frozenset({
-    AppointmentStatus.COMPLETED,
-    AppointmentStatus.NO_SHOW,
-    AppointmentStatus.CANCELLED,
-})
 
 
 RescheduleResult = tuple[AppointmentSnapshotResponse, bool, datetime, datetime]

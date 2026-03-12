@@ -46,11 +46,21 @@ from app.services.appointment_lifecycle_service import (
     RescheduleSlotConflictError,
     RescheduleValidationError,
 )
+from app.services.appointment_snapshot_service import (
+    get_appointment_snapshot,
+    get_public_appointment_snapshots_by_telegram_id,
+)
+from app.services.public_appointment_read_service import (
+    _require_public_appointment_access,
+    get_public_appointment_snapshot as get_public_appointment_snapshot_service,
+)
 from app.schemas.appointment_snapshot import (
     AppointmentCancelRequest,
     AppointmentCancelResponse,
     AppointmentRescheduleRequest,
     AppointmentRescheduleResponse,
+    AppointmentSnapshotResponse,
+    PublicAppointmentListPage,
 )
 from fastapi import status
 
@@ -65,39 +75,6 @@ TERMINAL_STATUSES = (
 )
 
 _SENTINEL = object()
-
-
-async def _require_public_appointment_access(
-    *,
-    db: AsyncSession,
-    tenant_id: int,
-    appointment_id: int,
-    telegram_id: int,
-) -> None:
-    """
-    Public access validator.
-
-    Proof of access: Telegram user binding (telegram_id) + tenant context (slug).
-    """
-    stmt = (
-        select(Appointment.id, Client.telegram_id)
-        .join(Client, Appointment.client_id == Client.id)
-        .where(
-            and_(
-                Appointment.id == appointment_id,
-                Appointment.tenant_id == tenant_id,
-                Appointment.deleted_at.is_(None),
-                Client.tenant_id == tenant_id,
-                Client.deleted_at.is_(None),
-            )
-        )
-    )
-    result = await db.execute(stmt)
-    row = result.one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Запись не найдена")
-    if int(row.telegram_id or 0) != int(telegram_id):
-        raise HTTPException(status_code=403, detail="Нет доступа к записи")
 
 
 async def _cancel_public_appointment(
@@ -797,6 +774,26 @@ async def create_public_appointment(
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервиса")
 
 
+# ─── GET /appointments/public ──────────────────────────────────────────────────
+
+@router.get("/appointments/public", response_model=PublicAppointmentListPage)
+@limiter.limit("30/minute")
+async def list_public_appointments(
+    request: Request,
+    telegram_id: int = Query(...),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    page = await get_public_appointment_snapshots_by_telegram_id(
+        db, tenant_id, telegram_id, limit=limit, offset=offset
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="Клиент не найден")
+    return page
+
+
 # ─── GET /appointments/public/current ──────────────────────────────────────────
 
 @router.get("/appointments/public/current", response_model=AppointmentRead)
@@ -848,6 +845,26 @@ async def get_public_current_appointment(
 
     _enrich_appointment_auto_fields(appt)
     return appt
+
+
+@router.get("/appointments/public/{appointment_id}", response_model=AppointmentSnapshotResponse)
+@limiter.limit("30/minute")
+async def get_public_appointment_snapshot(
+    request: Request,
+    appointment_id: int,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    snapshot = await get_public_appointment_snapshot_service(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        telegram_id=telegram_id,
+    )
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    return snapshot
 
 
 @router.get("/appointments/public/{appointment_id}/intake", response_model=AppointmentIntakeRead)

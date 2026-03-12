@@ -1,6 +1,6 @@
 """
 Tests for public WebApp booking workflow.
-Covers: services/public, slots/public, appointments/public.
+Covers: services/public, slots/public, appointments/public, public read (list + single).
 """
 
 import pytest
@@ -798,3 +798,317 @@ async def test_public_reschedule_tenant_isolation_returns_404(
         },
     )
     assert res.status_code == 404
+
+
+# ─── Public read (list + single) contract regression ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_public_list_appointments_happy_path_returns_snapshot_with_capability_flags(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public returns list of client appointments with can_reschedule, can_cancel."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 60101
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "List Read User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+
+    list_res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id},
+    )
+    assert list_res.status_code == 200
+    data = list_res.json()
+    assert isinstance(data, dict)
+    assert "items" in data
+    assert "limit" in data
+    assert "offset" in data
+    assert "total" in data
+    assert "has_more" in data
+    assert len(data["items"]) >= 1
+    assert data["limit"] >= 1
+    assert data["offset"] >= 0
+    assert data["total"] >= 1
+    item = data["items"][0]
+    assert "appointment_id" in item
+    assert "can_reschedule" in item
+    assert "can_cancel" in item
+    assert item["can_reschedule"] is True
+    assert item["can_cancel"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_list_appointments_client_not_found_returns_404(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public with telegram_id that has no client returns 404."""
+    slug = await _ensure_public_slug(db_session)
+    res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": 999999999},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_single_read_happy_path_returns_full_snapshot_with_capability_flags(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public/{id} returns full snapshot with can_reschedule, can_cancel."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 60201
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Single Read User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    single_res = await client.get(
+        f"/api/v1/{slug}/appointments/public/{appt_id}",
+        params={"telegram_id": tg_id},
+    )
+    assert single_res.status_code == 200
+    data = single_res.json()
+    assert data["appointment_id"] == appt_id
+    assert "status" in data
+    assert "start_time" in data
+    assert "end_time" in data
+    assert "client" in data
+    assert "service" in data
+    assert "can_reschedule" in data
+    assert "can_cancel" in data
+    assert data["can_reschedule"] is True
+    assert data["can_cancel"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_single_read_foreign_telegram_id_returns_403(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public/{id} with different telegram_id returns 403."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_owner = 60301
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_owner,
+            "full_name": "Owner",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client.get(
+        f"/api/v1/{slug}/appointments/public/{appt_id}",
+        params={"telegram_id": 60302},
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_single_read_appointment_not_found_returns_404(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public/{id} for non-existent id returns 404."""
+    slug = await _ensure_public_slug(db_session)
+    res = await client.get(
+        f"/api/v1/{slug}/appointments/public/999999",
+        params={"telegram_id": 1},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_list_appointments_limit_and_order_and_capability_flags(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public?limit=N limits results, preserves order by start_time and capability flags."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 70101
+    for i, day in enumerate(["2026-02-20", "2026-02-21", "2026-02-22", "2026-02-23", "2026-02-24"]):
+        create_res = await client.post(
+            f"/api/v1/{slug}/appointments/public",
+            json={
+                "service_id": service_id,
+                "date": f"{day}T10:00:00Z",
+                "telegram_id": tg_id,
+                "full_name": "Pagination User",
+                "is_waitlist": True,
+            },
+        )
+        assert create_res.status_code == 200
+
+    list_full = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 10},
+    )
+    assert list_full.status_code == 200
+    full_page = list_full.json()
+    full_data = full_page["items"]
+    assert len(full_data) >= 5
+    assert full_page["total"] >= 5
+
+    list_limited = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 2, "offset": 0},
+    )
+    assert list_limited.status_code == 200
+    limited_page = list_limited.json()
+    limited = limited_page["items"]
+    assert len(limited) == 2
+    assert limited_page["limit"] == 2
+    assert limited_page["offset"] == 0
+    assert limited[0]["start_time"] <= limited[1]["start_time"]
+    assert limited[0]["appointment_id"] == full_data[0]["appointment_id"]
+    assert limited[1]["appointment_id"] == full_data[1]["appointment_id"]
+    for item in limited:
+        assert "can_reschedule" in item
+        assert "can_cancel" in item
+
+
+@pytest.mark.asyncio
+async def test_public_list_appointments_offset_returns_next_chunk(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """GET /appointments/public?offset=N returns next chunk, order stable by start_time."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 70201
+    for day in ["2026-02-25", "2026-02-26", "2026-02-27", "2026-02-28", "2026-03-01"]:
+        create_res = await client.post(
+            f"/api/v1/{slug}/appointments/public",
+            json={
+                "service_id": service_id,
+                "date": f"{day}T10:00:00Z",
+                "telegram_id": tg_id,
+                "full_name": "Offset User",
+                "is_waitlist": True,
+            },
+        )
+        assert create_res.status_code == 200
+
+    full_res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 10},
+    )
+    full_page = full_res.json()
+    full_data = full_page["items"]
+    assert len(full_data) >= 5
+
+    offset_res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 2, "offset": 2},
+    )
+    assert offset_res.status_code == 200
+    chunk_page = offset_res.json()
+    chunk = chunk_page["items"]
+    assert len(chunk) == 2
+    assert chunk_page["offset"] == 2
+    assert chunk_page["total"] >= 5
+    assert chunk[0]["appointment_id"] == full_data[2]["appointment_id"]
+    assert chunk[1]["appointment_id"] == full_data[3]["appointment_id"]
+    assert chunk[0]["start_time"] <= chunk[1]["start_time"]
+
+
+@pytest.mark.asyncio
+async def test_public_list_page_contract_has_more_true_when_more_records(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Page contract: has_more is True when total > offset + len(items)."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 70301
+    for day in ["2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"]:
+        create_res = await client.post(
+            f"/api/v1/{slug}/appointments/public",
+            json={
+                "service_id": service_id,
+                "date": f"{day}T10:00:00Z",
+                "telegram_id": tg_id,
+                "full_name": "HasMore User",
+                "is_waitlist": True,
+            },
+        )
+        assert create_res.status_code == 200
+
+    res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 2, "offset": 0},
+    )
+    assert res.status_code == 200
+    page = res.json()
+    assert page["has_more"] is True
+    assert page["total"] >= 5
+    assert len(page["items"]) == 2
+    assert page["limit"] == 2
+    assert page["offset"] == 0
+
+
+@pytest.mark.asyncio
+async def test_public_list_page_contract_has_more_false_on_last_page(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Page contract: has_more is False on last page."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 70401
+    for day in ["2026-03-07", "2026-03-08", "2026-03-09"]:
+        create_res = await client.post(
+            f"/api/v1/{slug}/appointments/public",
+            json={
+                "service_id": service_id,
+                "date": f"{day}T10:00:00Z",
+                "telegram_id": tg_id,
+                "full_name": "LastPage User",
+                "is_waitlist": True,
+            },
+        )
+        assert create_res.status_code == 200
+
+    res = await client.get(
+        f"/api/v1/{slug}/appointments/public",
+        params={"telegram_id": tg_id, "limit": 2, "offset": 2},
+    )
+    assert res.status_code == 200
+    page = res.json()
+    assert page["has_more"] is False
+    assert page["total"] >= 3
+    assert len(page["items"]) >= 1
+    assert page["offset"] == 2

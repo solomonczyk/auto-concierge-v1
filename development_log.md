@@ -2153,3 +2153,54 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Audit consistency: cancel history written only via lifecycle service (AppointmentHistory: event_type="cancelled", old_status, new_status, source="public_api", reason, changed_by_user_id=None).
 - Snapshot consistency: response returns lifecycle snapshot after cancel (status="CANCELLED").
 - Regression slice: `pytest -q tests/test_public_workflow.py` passed (includes public cancel scenarios).
+
+## 2026-03-12 — Public appointment snapshot read endpoint
+
+- Public endpoint added: GET /api/v1/{slug}/appointments/public/{appointment_id} — returns canonical appointment snapshot (read-only).
+- Access control reuse: uses existing `_require_public_appointment_access` (appointment_id + tenant slug context + telegram_id binding).
+- Snapshot source of truth: uses `app.services.appointment_snapshot_service.get_appointment_snapshot` (no ad-hoc response assembly).
+
+## 2026-03-12 — Public appointment list endpoint
+
+- GET /api/v1/{slug}/appointments/public — returns list of client appointments by telegram_id (query). Uses get_tenant_id_by_slug, Client by telegram_id+tenant_id, Appointment by client_id+tenant_id+not deleted, order by start_time asc. Each item via get_appointment_snapshot (includes can_reschedule, can_cancel).
+
+## 2026-03-12 — Public appointment list service extracted (N+1 removed)
+
+- Bulk method `get_appointment_snapshots_for_client(db, tenant_id, client_id)` in appointment_snapshot_service: one query for appointments (with relations), one for history (first source per appointment), snapshot built via shared `_build_snapshot_from_appt` (capability flags via rules). Endpoint only resolves client and calls service.
+
+## 2026-03-12 — Public appointment list endpoint fully service-driven
+
+- Orchestration method `get_public_appointment_snapshots_by_telegram_id(db, tenant_id, telegram_id)` in appointment_snapshot_service: client lookup + bulk snapshots. Returns None if client not found (caller maps to 404). Endpoint has no SQL for list flow.
+
+## 2026-03-12 — Public appointment single read fully service-driven
+
+- New service module: `app.services.public_appointment_read_service`. Orchestration method `get_public_appointment_snapshot` performs access-check and returns canonical snapshot.
+
+## 2026-03-12 — Public self-service read regression tests
+
+- Contract tests in `tests/test_public_workflow.py`: list happy path (with can_reschedule, can_cancel), list 404 when client not found, single read happy path (full snapshot with capability flags), single read 403 for foreign telegram_id, single read 404 for non-existent appointment.
+
+## 2026-03-12 — Public appointment list pagination
+
+- Query params `limit` (default 50, max 100), `offset` (default 0). Applied in service layer (`get_appointment_snapshots_for_client`, `get_public_appointment_snapshots_by_telegram_id`) via SQL LIMIT/OFFSET. Response remains list of snapshots.
+
+## 2026-03-12 — Public list pagination regression tests
+
+- `test_public_list_appointments_limit_and_order_and_capability_flags`: limit limits results, order by start_time, capability flags present.
+- `test_public_list_appointments_offset_returns_next_chunk`: offset returns correct chunk, order stable.
+
+## 2026-03-12 — Public appointment list page contract
+
+- `PublicAppointmentListPage` in `app/schemas/appointment_snapshot.py`: items, limit, offset, total, has_more. total via COUNT(*) in service; has_more = offset + len(items) < total.
+
+## 2026-03-12 — Public list page contract regression tests
+
+- Updated `test_public_list_appointments_happy_path`: response is dict, has items/limit/offset/total/has_more, items retain can_reschedule/can_cancel.
+- `test_public_list_page_contract_has_more_true_when_more_records`: has_more=True when total > limit.
+- `test_public_list_page_contract_has_more_false_on_last_page`: has_more=False on last page.
+
+## 2026-03-12 — Public self-service capability flags in snapshot
+
+- Snapshot contract extended: added `can_reschedule`, `can_cancel` flags to `AppointmentSnapshotResponse`.
+- Flags are computed in the snapshot builder (not in endpoints): `appointment_snapshot_service.get_appointment_snapshot`.
+- Rules reuse: extracted shared rules to `app.services.appointment_lifecycle_rules` to avoid import cycles and keep lifecycle + snapshot consistent.
