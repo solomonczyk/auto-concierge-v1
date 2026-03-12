@@ -21,6 +21,7 @@ export async function loginAsAdmin(page: Page): Promise<void> {
   }
   // Backend sets Set-Cookie; request context stores it for same-origin
   await page.goto('/concierge/', { waitUntil: 'networkidle' })
+  page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()))
   await page.waitForSelector('[data-testid="dashboard-root"]', { state: 'visible', timeout: 15000 })
 }
 
