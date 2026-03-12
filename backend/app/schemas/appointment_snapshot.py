@@ -55,3 +55,23 @@ class AppointmentCancelResponse(BaseModel):
     status: str
     cancelled: bool
     snapshot: AppointmentSnapshotResponse
+
+
+class AppointmentRescheduleRequest(BaseModel):
+    """Request for POST /appointments/{id}/reschedule."""
+    new_start_time: datetime
+    new_end_time: datetime
+    reason: Optional[str] = None
+
+
+class AppointmentRescheduleResponse(BaseModel):
+    """Response for POST /appointments/{id}/reschedule. Returns old/new times and updated snapshot."""
+    appointment_id: int
+    tenant_id: int
+    rescheduled: bool
+    old_start_time: datetime
+    old_end_time: datetime
+    new_start_time: datetime
+    new_end_time: datetime
+    status: str
+    snapshot: AppointmentSnapshotResponse

@@ -188,17 +188,19 @@ class Appointment(Base):
 
 
 class AppointmentHistory(Base):
-    """Immutable audit log of every appointment status change."""
+    """Immutable audit log of appointment status changes and reschedule events."""
     __tablename__ = "appointment_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     appointment_id: Mapped[int] = mapped_column(ForeignKey("appointments.id"), nullable=False, index=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    event_type: Mapped[Optional[str]] = mapped_column(String(30), nullable=True, default="status_change")
     old_status: Mapped[str] = mapped_column(String(20), nullable=False)
     new_status: Mapped[str] = mapped_column(String(20), nullable=False)
     changed_by_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     source: Mapped[str] = mapped_column(String(30), nullable=False, default="api")
     reason: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     appointment: Mapped["Appointment"] = relationship("Appointment", back_populates="history")

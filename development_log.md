@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-03-12 — Reschedule Flow Layer (полный контур)
+
+Реализован Reschedule Flow Layer — перенос записи на новый слот:
+
+- **Step 1:** Pydantic-схемы `AppointmentRescheduleRequest`, `AppointmentRescheduleResponse` в `backend/app/schemas/appointment_snapshot.py`. appointment reschedule schemas added
+- **Step 2:** Сервис `reschedule_appointment()` в `backend/app/services/appointment_lifecycle_service.py`. appointment reschedule service added
+- **Step 3:** Правила: COMPLETED, NO_SHOW, CANCELLED запрещены; new_start_time < new_end_time; anti-double-booking (slot conflict). appointment reschedule rules enforced
+- **Step 4:** History event с event_type="rescheduled", payload (old_start_time, new_start_time, old_end_time, new_end_time). appointment reschedule history event added
+- **Step 5:** Snapshot после commit через `get_appointment_snapshot()`. appointment reschedule snapshot wired
+- **Step 6:** `POST /api/v1/appointments/{appointment_id}/reschedule` endpoint. appointment reschedule endpoint added
+- **Step 7:** Regression tests (8 тестов): success, slot conflict 409, forbidden status 422, tenant isolation 404, invalid interval 422, history event created, snapshot returns new time, idempotent. appointment reschedule regression slice passed
+- **Migration:** `e7f8a9b0c1d2_add_appointment_history_reschedule` — event_type, payload в appointment_history.
+
+reschedule flow layer added
+
 ## 2026-03-12 — Client Lifecycle Actions Layer (полный контур)
 
 Реализован Client Lifecycle Actions Layer — cancel appointment как канонический lifecycle action:

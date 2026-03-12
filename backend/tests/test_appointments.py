@@ -1610,6 +1610,264 @@ async def test_cancel_appointment_forbidden_status(client: AsyncClient, db_sessi
         assert "detail" in data
 
 
+# ─── POST /{id}/reschedule (Reschedule Flow Layer) ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_success(client: AsyncClient):
+    """POST /appointments/{id}/reschedule returns 200 and new times in snapshot."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "Reschedule Success Client",
+            "client_phone": "+79992224444",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/reschedule",
+        json={
+            "new_start_time": "2026-03-30T19:00:00",
+            "new_end_time": "2026-03-30T20:00:00",
+            "reason": "client request",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["appointment_id"] == appt_id
+    assert data["tenant_id"] == 1
+    assert data["rescheduled"] is True
+    assert "19:00" in data["new_start_time"] or "2026-03-30T19" in data["new_start_time"]
+    assert "20:00" in data["new_end_time"] or "2026-03-30T20" in data["new_end_time"]
+    assert data["snapshot"]["start_time"] != data["old_start_time"] or data["snapshot"]["end_time"] != data["old_end_time"]
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_slot_conflict(client: AsyncClient):
+    """Reschedule to conflicting slot returns 409."""
+    create_res1 = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T10:00:00",
+            "client_name": "Reschedule Slot A",
+            "client_phone": "+79992225555",
+        },
+    )
+    assert create_res1.status_code == 200
+    appt_a = create_res1.json()["id"]
+
+    create_res2 = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T14:00:00",
+            "client_name": "Reschedule Slot B",
+            "client_phone": "+79992226666",
+        },
+    )
+    assert create_res2.status_code == 200
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_a}/reschedule",
+        json={
+            "new_start_time": "2026-03-30T14:00:00",
+            "new_end_time": "2026-03-30T15:00:00",
+        },
+    )
+    assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_forbidden_status(client: AsyncClient, db_session: AsyncSession):
+    """Reschedule returns 422 for COMPLETED, NO_SHOW, CANCELLED."""
+    shop = (await db_session.execute(select(Shop).where(Shop.tenant_id == 1))).scalar_one()
+    service = (await db_session.execute(select(Service).where(Service.tenant_id == 1))).scalar_one()
+    test_client = (await db_session.execute(select(Client).where(Client.tenant_id == 1))).scalar_one()
+
+    for status_val in (AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED):
+        appt = Appointment(
+            tenant_id=1,
+            shop_id=shop.id,
+            client_id=test_client.id,
+            service_id=service.id,
+            start_time=datetime(2026, 3, 30, 20, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 3, 30, 21, 0, 0, tzinfo=timezone.utc),
+            status=status_val,
+        )
+        db_session.add(appt)
+        await db_session.commit()
+
+        res = await client_auth.post(
+            f"{settings.API_V1_STR}/appointments/{appt.id}/reschedule",
+            json={
+                "new_start_time": "2026-03-30T22:00:00",
+                "new_end_time": "2026-03-30T23:00:00",
+            },
+        )
+        assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_tenant_isolation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+):
+    """Reschedule returns 404 when appointment belongs to another tenant."""
+    from app.models.models import Tenant, TariffPlan
+
+    tariff = (await db_session.execute(select(TariffPlan).limit(1))).scalar_one()
+    db_session.add(Tenant(id=2, name="Tenant B", status="active", tariff_plan_id=tariff.id, slug="tenant-b2"))
+    await db_session.flush()
+    shop_b = Shop(tenant_id=2, name="Shop B3", address="Addr B3", phone="+79990000006")
+    db_session.add(shop_b)
+    await db_session.flush()
+    svc_b = Service(tenant_id=2, name="Svc B3", duration_minutes=30, base_price=500.0)
+    db_session.add(svc_b)
+    await db_session.flush()
+    cli_b = Client(tenant_id=2, full_name="Client B3", phone="+79990000007")
+    db_session.add(cli_b)
+    await db_session.flush()
+    appt_b = Appointment(
+        tenant_id=2,
+        shop_id=shop_b.id,
+        client_id=cli_b.id,
+        service_id=svc_b.id,
+        start_time=datetime(2026, 3, 30, 12, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 3, 30, 12, 30, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt_b)
+    await db_session.commit()
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_b.id}/reschedule",
+        json={
+            "new_start_time": "2026-03-30T13:00:00",
+            "new_end_time": "2026-03-30T13:30:00",
+        },
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_invalid_interval(client: AsyncClient):
+    """Reschedule with new_start_time >= new_end_time returns 422."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "Invalid Interval Client",
+            "client_phone": "+79992227777",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/reschedule",
+        json={
+            "new_start_time": "2026-03-30T20:00:00",
+            "new_end_time": "2026-03-30T19:00:00",
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_history_event(client: AsyncClient):
+    """Reschedule writes event to appointment_history (old_status==new_status for reschedule)."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "History Event Client",
+            "client_phone": "+79992228888",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+    hist_before = await client_auth.get(f"{settings.API_V1_STR}/appointments/{appt_id}/history")
+    count_before = len(hist_before.json())
+
+    await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/reschedule",
+        json={
+            "new_start_time": "2026-03-30T19:00:00",
+            "new_end_time": "2026-03-30T20:00:00",
+            "reason": "reschedule audit",
+        },
+    )
+
+    hist_res = await client_auth.get(f"{settings.API_V1_STR}/appointments/{appt_id}/history")
+    assert hist_res.status_code == 200
+    history = hist_res.json()
+    assert len(history) > count_before
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_snapshot_returns_new_time(client: AsyncClient):
+    """Reschedule response snapshot reflects new start_time and end_time."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "Snapshot Client",
+            "client_phone": "+79992229999",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/reschedule",
+        json={
+            "new_start_time": "2026-03-31T09:00:00",
+            "new_end_time": "2026-03-31T10:00:00",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "09:00" in str(data["snapshot"]["start_time"]) or "2026-03-31" in str(data["snapshot"]["start_time"])
+    assert "10:00" in str(data["snapshot"]["end_time"]) or "2026-03-31" in str(data["snapshot"]["end_time"])
+
+
+@pytest.mark.asyncio
+async def test_reschedule_appointment_idempotent(client: AsyncClient):
+    """Reschedule with same times returns 200, rescheduled=False (idempotent)."""
+    create_res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/",
+        json={
+            "service_id": 1,
+            "start_time": "2026-03-30T17:00:00",
+            "client_name": "Idempotent Reschedule Client",
+            "client_phone": "+79992230000",
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+    created = create_res.json()
+    start_str = created["start_time"].replace("Z", "+00:00") if "Z" in created["start_time"] else created["start_time"]
+    end_str = created["end_time"].replace("Z", "+00:00") if "Z" in created["end_time"] else created["end_time"]
+
+    res = await client_auth.post(
+        f"{settings.API_V1_STR}/appointments/{appt_id}/reschedule",
+        json={
+            "new_start_time": start_str,
+            "new_end_time": end_str,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["rescheduled"] is False
+
+
 # ─── PATCH status ─────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

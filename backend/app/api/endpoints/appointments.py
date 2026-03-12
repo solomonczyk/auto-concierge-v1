@@ -32,10 +32,19 @@ from app.services.outbox_service import enqueue_appointment_created_event, enque
 from app.services.appointment_snapshot_service import get_appointment_snapshot
 from app.services.appointment_lifecycle_service import (
     cancel_appointment,
+    reschedule_appointment,
     CancelForbiddenError,
     AppointmentNotFoundError,
+    RescheduleForbiddenError,
+    RescheduleSlotConflictError,
+    RescheduleValidationError,
 )
-from app.schemas.appointment_snapshot import AppointmentSnapshotResponse, AppointmentCancelResponse
+from app.schemas.appointment_snapshot import (
+    AppointmentSnapshotResponse,
+    AppointmentCancelResponse,
+    AppointmentRescheduleRequest,
+    AppointmentRescheduleResponse,
+)
 from app.core.rate_limit import PUBLIC_BOOKING_RATE_LIMIT, limiter
 from pydantic import BaseModel, Field
 
@@ -1006,6 +1015,78 @@ async def cancel_appointment_endpoint(
         tenant_id=snapshot.tenant_id,
         status=snapshot.status,
         cancelled=True,
+        snapshot=snapshot,
+    )
+
+
+@router.post(
+    "/{appointment_id}/reschedule",
+    response_model=AppointmentRescheduleResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def reschedule_appointment_endpoint(
+    appointment_id: int,
+    body: AppointmentRescheduleRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: int = Depends(deps.get_current_tenant_id),
+    current_user: User = Depends(deps.require_role([UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.MANAGER, UserRole.STAFF])),
+):
+    """
+    Reschedule appointment to new start/end time.
+    Canonical lifecycle action. Reuses anti-double-booking rules.
+    """
+    try:
+        snapshot, rescheduled, old_start_time, old_end_time = await reschedule_appointment(
+            db,
+            appointment_id,
+            tenant_id,
+            new_start_time=body.new_start_time,
+            new_end_time=body.new_end_time,
+            changed_by_user_id=current_user.id,
+            source="dashboard",
+            reason=body.reason,
+        )
+    except AppointmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    except RescheduleForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+    except RescheduleSlotConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+    except RescheduleValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+    if rescheduled:
+        await enqueue_appointment_updated_event(db, tenant_id=tenant_id, appointment_id=appointment_id)
+        try:
+            redis = RedisService.get_redis()
+            await redis.publish(
+                f"appointments_updates:{tenant_id}",
+                json.dumps({
+                    "type": "appointment_rescheduled",
+                    "appointment_id": appointment_id,
+                }),
+            )
+        except Exception as redis_err:
+            logger.warning("Reschedule: redis publish failed: %s", redis_err)
+
+    return AppointmentRescheduleResponse(
+        appointment_id=snapshot.appointment_id,
+        tenant_id=snapshot.tenant_id,
+        rescheduled=rescheduled,
+        old_start_time=old_start_time,
+        old_end_time=old_end_time,
+        new_start_time=body.new_start_time,
+        new_end_time=body.new_end_time,
+        status=snapshot.status,
         snapshot=snapshot,
     )
 
