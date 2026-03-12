@@ -1,9 +1,10 @@
 from fastapi import APIRouter
-from app.api.endpoints import admin, shops, services, appointments, slots, webhook, ws, login, clients, public, tenants, telegram_bots, demo, ws_ticket, sla, features, _sentry_test
+from app.api.endpoints import admin, admin_control_plane, shops, services, appointments, slots, webhook, ws, login, clients, public, tenants, telegram_bots, demo, ws_ticket, sla, features, _sentry_test
 
 api_router = APIRouter()
 
 api_router.include_router(login.router, tags=["login"])
+api_router.include_router(admin_control_plane.router, tags=["admin", "control-plane"])
 api_router.include_router(_sentry_test.router, tags=["_internal"])
 api_router.include_router(tenants.router, prefix="/tenants", tags=["tenants"])
 api_router.include_router(telegram_bots.router, prefix="/tenants", tags=["telegram-bots"])

@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-03-12 — SaaS Admin / Control Plane Layer (полный контур)
+
+Реализован минимальный Control Plane слой:
+
+- **Step 1:** `GET /api/v1/admin/control-plane/summary` — platform-wide агрегат (total_tenants, active_tenants, ready_tenants, tenants_without_* и т.д.)
+- **Step 2:** `GET /api/v1/admin/tenants/overview` — список tenant с readiness flags (tenant_id, name, slug, status, shop_configured, services_configured, telegram_bot_registered, telegram_webhook_active, booking_ready)
+- **Step 3:** `GET /api/v1/admin/tenants/{tenant_id}` — полная карточка tenant (onboarding_state, readiness, shop, services_count, telegram_bot, webhook state)
+- **Step 4–6:** Actions: `POST .../activate-bot`, `POST .../provision-webhook`, `POST .../finalize-onboarding` — переиспользуют существующие сервисы
+- **Step 7:** Единый admin router в `backend/app/api/endpoints/admin_control_plane.py` (prefix /admin)
+- **Step 8:** Все endpoints под `require_superadmin`; non-superadmin → 403
+- **Step 9:** Unified schemas в `backend/app/schemas/admin_control_plane.py` — единый naming (telegram_bot_registered, telegram_webhook_active)
+- **Step 10:** Smoke tests в `backend/tests/test_admin_control_plane.py` — 13 тестов, все проходят
+
+control plane layer complete
+
 ## 2026-03-12 — SaaS Provisioning / Onboarding Layer
 
 Реализован контур SaaS Provisioning / Onboarding:
