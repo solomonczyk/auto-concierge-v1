@@ -16,7 +16,8 @@ export async function loginAsAdmin(page: Page): Promise<void> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   })
   if (res.status() !== 200) {
-    throw new Error(`Login API returned ${res.status()}`)
+    const body = await res.text()
+    throw new Error(`Login API returned ${res.status()} body=${body}`)
   }
   // Backend sets Set-Cookie; request context stores it for same-origin
   await page.goto('/concierge/', { waitUntil: 'networkidle' })
