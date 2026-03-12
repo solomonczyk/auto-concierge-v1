@@ -10,7 +10,8 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.models import Tenant, Appointment, Client
+from app.models.models import Tenant, Appointment, Client, Shop, Service, AppointmentHistory, AppointmentStatus, TenantStatus
+from app.services.appointment_snapshot_service import get_appointment_snapshot
 
 
 PUBLIC_TEST_SLUG = "test-tenant"
@@ -230,3 +231,352 @@ async def test_public_booking_with_auto_info_persists_snapshot_and_profile(
     assert client_entity.auto_profile.car_make == "Toyota"
     assert client_entity.auto_profile.car_year == 2018
     assert client_entity.auto_profile.vin == "JTDBR32E720040123"
+
+
+@pytest.mark.asyncio
+async def test_public_booking_creates_intake_automatically(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """POST /appointments/public creates appointment with linked AppointmentIntake (status=pending)."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    assert svc_res.status_code == 200
+    service_id = svc_res.json()[0]["id"]
+
+    payload = {
+        "service_id": service_id,
+        "date": "2026-02-20T10:00:00",
+        "telegram_id": 111222333,
+        "full_name": "Intake Test User",
+        "is_waitlist": True,
+    }
+    response = await client.post(f"/api/v1/{slug}/appointments/public", json=payload)
+    assert response.status_code == 200
+    appt_data = response.json()
+    appt_id = appt_data["id"]
+
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.intake))
+        .where(and_(Appointment.id == appt_id, Appointment.tenant_id == 1))
+    )
+    result = await db_session.execute(stmt)
+    appt = result.scalar_one()
+    assert appt.intake is not None
+    assert appt.intake.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_public_update_intake_answers(client: AsyncClient, db_session: AsyncSession):
+    """PATCH /appointments/public/{id}/intake/answers updates answers_json for client's appointment."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    assert svc_res.status_code == 200
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 444555666
+    payload = {
+        "service_id": service_id,
+        "date": "2026-02-20T10:00:00",
+        "telegram_id": tg_id,
+        "full_name": "Answers Update User",
+        "is_waitlist": True,
+    }
+    create_res = await client.post(f"/api/v1/{slug}/appointments/public", json=payload)
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    patch_res = await client.patch(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/intake/answers",
+        params={"telegram_id": tg_id},
+        json={"answers_json": '{"q1":"answer1","q2":"answer2"}'},
+    )
+    assert patch_res.status_code == 200
+
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.intake))
+        .where(and_(Appointment.id == appt_id, Appointment.tenant_id == 1))
+    )
+    result = await db_session.execute(stmt)
+    appt = result.scalar_one()
+    assert appt.intake is not None
+    assert appt.intake.answers_json == '{"q1":"answer1","q2":"answer2"}'
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_success_creates_history_and_returns_snapshot(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    assert svc_res.status_code == 200
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 999000111
+    create_payload = {
+        "service_id": service_id,
+        "date": "2026-02-20T10:00:00Z",
+        "telegram_id": tg_id,
+        "full_name": "Reschedule User",
+        "is_waitlist": True,
+    }
+    create_res = await client.post(f"/api/v1/{slug}/appointments/public", json=create_payload)
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res_payload = {
+        "new_start_time": "2026-02-20T12:00:00Z",
+        "new_end_time": "2026-02-20T13:00:00Z",
+        "reason": "client requested",
+    }
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/reschedule",
+        params={"telegram_id": tg_id},
+        json=res_payload,
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["appointment_id"] == appt_id
+    assert data["tenant_id"] == 1
+    assert data["rescheduled"] is True
+    assert data["new_start_time"].startswith("2026-02-20T12:00:00")
+    assert data["new_end_time"].startswith("2026-02-20T13:00:00")
+    assert data["snapshot"]["start_time"].startswith("2026-02-20T12:00:00")
+    assert data["snapshot"]["end_time"].startswith("2026-02-20T13:00:00")
+
+    await db_session.commit()
+    hist_stmt = select(AppointmentHistory).where(
+        and_(
+            AppointmentHistory.appointment_id == appt_id,
+            AppointmentHistory.tenant_id == 1,
+            AppointmentHistory.event_type == "rescheduled",
+        )
+    )
+    hist = (await db_session.execute(hist_stmt)).scalars().all()
+    assert len(hist) >= 1
+    assert any(h.source == "public_api" for h in hist)
+    assert any(h.reason == "client requested" for h in hist)
+
+    snap = await get_appointment_snapshot(db_session, appt_id, 1)
+    assert snap is not None
+    assert snap.start_time.isoformat().startswith("2026-02-20T12:00:00")
+    assert snap.end_time.isoformat().startswith("2026-02-20T13:00:00")
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_access_denied_for_foreign_appointment(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_owner = 10001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_owner,
+            "full_name": "Owner",
+            "is_waitlist": True,
+        },
+    )
+    appt_id = create_res.json()["id"]
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/reschedule",
+        params={"telegram_id": 10002},
+        json={
+            "new_start_time": "2026-02-20T12:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "attack",
+        },
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_appointment_not_found(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/999999/reschedule",
+        params={"telegram_id": 1},
+        json={
+            "new_start_time": "2026-02-20T12:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "n/a",
+        },
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_invalid_interval_returns_422(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 20001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Invalid Interval",
+            "is_waitlist": True,
+        },
+    )
+    appt_id = create_res.json()["id"]
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/reschedule",
+        params={"telegram_id": tg_id},
+        json={
+            "new_start_time": "2026-02-20T13:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "bad",
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_slot_conflict_returns_409(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_a = 30001
+    a_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_a,
+            "full_name": "A",
+            "is_waitlist": True,
+        },
+    )
+    appt_a = a_res.json()["id"]
+
+    # Create a conflicting appointment (status NEW) in the target slot.
+    shop_id = (await db_session.execute(select(Shop.id).where(Shop.tenant_id == 1))).scalar_one()
+    client_entity = Client(tenant_id=1, full_name="B", phone="+70000000000", telegram_id=30002)
+    db_session.add(client_entity)
+    await db_session.flush()
+    appt_b = Appointment(
+        tenant_id=1,
+        shop_id=shop_id,
+        client_id=client_entity.id,
+        service_id=service_id,
+        start_time=datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 2, 20, 13, 0, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt_b)
+    await db_session.commit()
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_a}/reschedule",
+        params={"telegram_id": tg_a},
+        json={
+            "new_start_time": "2026-02-20T12:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "conflict",
+        },
+    )
+    assert res.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_forbidden_status_returns_422(
+    client: AsyncClient, db_session: AsyncSession
+):
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 40001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Forbidden",
+            "is_waitlist": True,
+        },
+    )
+    appt_id = create_res.json()["id"]
+
+    appt = await db_session.get(Appointment, appt_id)
+    assert appt is not None
+    appt.status = AppointmentStatus.CANCELLED
+    await db_session.commit()
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/reschedule",
+        params={"telegram_id": tg_id},
+        json={
+            "new_start_time": "2026-02-20T12:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "try",
+        },
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_tenant_isolation_returns_404(
+    client: AsyncClient, db_session: AsyncSession
+):
+    # Tenant 1 has slug "test-tenant"; create another tenant with different slug and appointment under it.
+    slug = await _ensure_public_slug(db_session)
+
+    tenant2 = Tenant(id=2, name="Tenant 2", status=TenantStatus.ACTIVE, tariff_plan_id=1, slug="other-tenant")
+    db_session.add(tenant2)
+    await db_session.flush()
+
+    shop2 = Shop(tenant_id=2, name="Shop2", address="Addr2", phone="+79990000002")
+    db_session.add(shop2)
+    await db_session.flush()
+
+    service2 = Service(tenant_id=2, name="Svc2", duration_minutes=60, base_price=1000.0)
+    db_session.add(service2)
+    await db_session.flush()
+
+    client2 = Client(tenant_id=2, full_name="Client2", phone="+79990000003", telegram_id=50001)
+    db_session.add(client2)
+    await db_session.flush()
+
+    appt2 = Appointment(
+        tenant_id=2,
+        shop_id=shop2.id,
+        client_id=client2.id,
+        service_id=service2.id,
+        start_time=datetime(2026, 2, 20, 10, 0, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 2, 20, 11, 0, 0, tzinfo=timezone.utc),
+        status=AppointmentStatus.NEW,
+    )
+    db_session.add(appt2)
+    await db_session.commit()
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt2.id}/reschedule",
+        params={"telegram_id": 50001},
+        json={
+            "new_start_time": "2026-02-20T12:00:00Z",
+            "new_end_time": "2026-02-20T13:00:00Z",
+            "reason": "isolation",
+        },
+    )
+    assert res.status_code == 404

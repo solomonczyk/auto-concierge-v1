@@ -2133,3 +2133,13 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Retry-safe: provision_webhook re-invokes API, overwrites state; idempotent.
 - Future-ops TODO: async job/outbox, retries with backoff, getWebhookInfo reconciliation, drift detection.
 - webhook provisioning layer closed.
+
+## 2026-03-12 — Client Self-Service Reschedule Layer (Public)
+
+- Reused canonical schemas (no duplicates): AppointmentRescheduleRequest/AppointmentRescheduleResponse in backend/app/schemas/appointment_snapshot.py.
+- Public access validation added: appointment_id + telegram_id, scoped by tenant slug (prevents rescheduling foreign appointment).
+- Public endpoint added: POST /api/v1/{slug}/appointments/public/{appointment_id}/reschedule.
+- Lifecycle reuse: wired to appointment_lifecycle_service.reschedule_appointment with source="public_api" and reason passthrough.
+- Public-safe error mapping: 404 not found, 403 no access, 409 slot conflict, 422 invalid interval / forbidden status.
+- Audit consistency: history event created via lifecycle service (event_type="rescheduled", payload old/new times, source, reason).
+- Regression slice: backend/tests/test_public_workflow.py reschedule scenarios added; pytest backend/tests/test_public_workflow.py passed.

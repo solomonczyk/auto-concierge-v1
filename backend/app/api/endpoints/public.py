@@ -37,6 +37,17 @@ from app.services.audit_service import log_audit
 from app.services.outbox_service import enqueue_appointment_created_event, enqueue_appointment_updated_event
 from app.services.redis_service import RedisService
 from app.services.usage_service import check_appointments_limit, LimitExceededError
+from app.services.appointment_lifecycle_service import (
+    reschedule_appointment,
+    AppointmentNotFoundError,
+    RescheduleForbiddenError,
+    RescheduleSlotConflictError,
+    RescheduleValidationError,
+)
+from app.schemas.appointment_snapshot import (
+    AppointmentRescheduleRequest,
+    AppointmentRescheduleResponse,
+)
 from fastapi import status
 
 logger = logging.getLogger(__name__)
@@ -50,6 +61,39 @@ TERMINAL_STATUSES = (
 )
 
 _SENTINEL = object()
+
+
+async def _require_public_appointment_access(
+    *,
+    db: AsyncSession,
+    tenant_id: int,
+    appointment_id: int,
+    telegram_id: int,
+) -> None:
+    """
+    Public access validator.
+
+    Proof of access: Telegram user binding (telegram_id) + tenant context (slug).
+    """
+    stmt = (
+        select(Appointment.id, Client.telegram_id)
+        .join(Client, Appointment.client_id == Client.id)
+        .where(
+            and_(
+                Appointment.id == appointment_id,
+                Appointment.tenant_id == tenant_id,
+                Appointment.deleted_at.is_(None),
+                Client.tenant_id == tenant_id,
+                Client.deleted_at.is_(None),
+            )
+        )
+    )
+    result = await db.execute(stmt)
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    if int(row.telegram_id or 0) != int(telegram_id):
+        raise HTTPException(status_code=403, detail="Нет доступа к записи")
 
 
 def _upsert_appointment_auto_snapshot(
@@ -920,6 +964,85 @@ async def cancel_public_appointment(
 
     _enrich_appointment_auto_fields(appt)
     return appt
+
+
+# ─── POST /appointments/public/{id}/reschedule ────────────────────────────────
+
+@router.post(
+    "/appointments/public/{appointment_id}/reschedule",
+    response_model=AppointmentRescheduleResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("30/minute")
+async def reschedule_public_appointment(
+    request: Request,
+    appointment_id: int,
+    payload: AppointmentRescheduleRequest,
+    telegram_id: int = Query(...),
+    tenant_id: int = Depends(get_tenant_id_by_slug),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_public_appointment_access(
+        db=db,
+        tenant_id=tenant_id,
+        appointment_id=appointment_id,
+        telegram_id=telegram_id,
+    )
+
+    try:
+        snapshot, rescheduled, old_start_time, old_end_time = await reschedule_appointment(
+            db,
+            appointment_id,
+            tenant_id,
+            new_start_time=payload.new_start_time,
+            new_end_time=payload.new_end_time,
+            changed_by_user_id=None,
+            source="public_api",
+            reason=payload.reason,
+        )
+    except AppointmentNotFoundError:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+    except RescheduleForbiddenError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Недопустимый статус для переноса",
+        )
+    except RescheduleSlotConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Выбранное время уже занято",
+        )
+    except RescheduleValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Невалидный интервал времени",
+        )
+
+    if rescheduled:
+        await enqueue_appointment_updated_event(db, tenant_id=tenant_id, appointment_id=appointment_id)
+        try:
+            redis = RedisService.get_redis()
+            await redis.publish(
+                f"appointments_updates:{tenant_id}",
+                json.dumps({
+                    "type": "appointment_rescheduled",
+                    "appointment_id": appointment_id,
+                }),
+            )
+        except Exception as redis_err:
+            logger.warning("Public reschedule: redis publish failed: %s", redis_err)
+
+    return AppointmentRescheduleResponse(
+        appointment_id=snapshot.appointment_id,
+        tenant_id=snapshot.tenant_id,
+        rescheduled=rescheduled,
+        old_start_time=old_start_time,
+        old_end_time=old_end_time,
+        new_start_time=payload.new_start_time,
+        new_end_time=payload.new_end_time,
+        status=snapshot.status,
+        snapshot=snapshot,
+    )
 
 
 # ─── GET /clients/public ──────────────────────────────────────────────────────
