@@ -714,6 +714,131 @@ async def test_public_cancel_already_cancelled_is_idempotent_and_does_not_duplic
     assert len(hist) == 1
 
 
+# ─── Client Action Consistency Layer: capability flags, PATCH cancel ───────────
+
+
+@pytest.mark.asyncio
+async def test_public_cancel_returns_fresh_snapshot_with_capability_flags(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """POST cancel returns snapshot with can_reschedule=False, can_cancel=False after cancel."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 990001
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Capability User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    cancel_res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/cancel",
+        params={"telegram_id": tg_id},
+        json={"reason": "client changed plans"},
+    )
+    assert cancel_res.status_code == 200
+    data = cancel_res.json()
+    assert data["cancelled"] is True
+    assert data["status"] == "CANCELLED"
+    assert "snapshot" in data
+    snap = data["snapshot"]
+    assert snap["status"] == "CANCELLED"
+    assert snap["can_reschedule"] is False
+    assert snap["can_cancel"] is False
+
+
+@pytest.mark.asyncio
+async def test_public_reschedule_returns_fresh_snapshot_with_capability_flags(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Reschedule returns snapshot with can_reschedule, can_cancel reflecting new status."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 990002
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Reschedule Cap User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    res = await client.post(
+        f"/api/v1/{slug}/appointments/public/{appt_id}/reschedule",
+        params={"telegram_id": tg_id},
+        json={
+            "new_start_time": "2026-02-20T14:00:00Z",
+            "new_end_time": "2026-02-20T15:00:00Z",
+            "reason": "client",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["rescheduled"] is True
+    assert "snapshot" in data
+    snap = data["snapshot"]
+    assert snap["status"] in ("NEW", "CONFIRMED", "WAITLIST")
+    assert "can_reschedule" in snap
+    assert "can_cancel" in snap
+    assert snap["can_reschedule"] is True
+    assert snap["can_cancel"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_patch_cancel_returns_fresh_snapshot(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """PATCH /appointments/public/cancel returns AppointmentCancelResponse (snapshot-based)."""
+    slug = await _ensure_public_slug(db_session)
+    svc_res = await client.get(f"/api/v1/{slug}/services/public")
+    service_id = svc_res.json()[0]["id"]
+
+    tg_id = 990003
+    create_res = await client.post(
+        f"/api/v1/{slug}/appointments/public",
+        json={
+            "service_id": service_id,
+            "date": "2026-02-20T10:00:00Z",
+            "telegram_id": tg_id,
+            "full_name": "Patch Cancel User",
+            "is_waitlist": True,
+        },
+    )
+    assert create_res.status_code == 200
+    appt_id = create_res.json()["id"]
+
+    patch_res = await client.patch(
+        f"/api/v1/{slug}/appointments/public/cancel",
+        params={"telegram_id": tg_id, "appointment_id": appt_id},
+    )
+    assert patch_res.status_code == 200
+    data = patch_res.json()
+    assert data["appointment_id"] == appt_id
+    assert data["cancelled"] is True
+    assert data["status"] == "CANCELLED"
+    assert "snapshot" in data
+    snap = data["snapshot"]
+    assert snap["status"] == "CANCELLED"
+    assert snap["can_reschedule"] is False
+    assert snap["can_cancel"] is False
+
+
 @pytest.mark.asyncio
 async def test_public_cancel_tenant_isolation_returns_404(
     client: AsyncClient, db_session: AsyncSession

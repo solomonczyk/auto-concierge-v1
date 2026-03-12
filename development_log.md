@@ -2204,3 +2204,11 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Snapshot contract extended: added `can_reschedule`, `can_cancel` flags to `AppointmentSnapshotResponse`.
 - Flags are computed in the snapshot builder (not in endpoints): `appointment_snapshot_service.get_appointment_snapshot`.
 - Rules reuse: extracted shared rules to `app.services.appointment_lifecycle_rules` to avoid import cycles and keep lifecycle + snapshot consistent.
+
+## 2026-03-12 — Client Action Consistency Layer (контур закрыт)
+
+- **PATCH /appointments/public/cancel**: переведён на `AppointmentCancelResponse`, делегирует в `_cancel_public_appointment`. Возвращает fresh snapshot вместо AppointmentRead.
+- **POST /appointments/public/{id}/cancel**: добавлен enqueue `appointment_updated_event` при успешной отмене (выровнено с reschedule).
+- **Контракт**: cancel (POST и PATCH) и reschedule возвращают snapshot-based response с `can_reschedule`, `can_cancel`.
+- **Regression tests**: `test_public_cancel_returns_fresh_snapshot_with_capability_flags`, `test_public_reschedule_returns_fresh_snapshot_with_capability_flags`, `test_public_patch_cancel_returns_fresh_snapshot`.
+- Аудит: `docs/CLIENT_ACTION_CONSISTENCY_AUDIT.md`.
