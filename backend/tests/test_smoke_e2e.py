@@ -164,7 +164,7 @@ async def test_full_client_journey(
     from app.api.endpoints import webhook as webhook_endpoint
 
     monkeypatch.setattr(webhook_endpoint.settings, "ENVIRONMENT", "test")
-    monkeypatch.setattr(webhook_endpoint.settings, "TELEGRAM_WEBHOOK_SECRET", None)
+    monkeypatch.setattr(webhook_endpoint.settings, "TELEGRAM_WEBHOOK_SECRET", "e2e-webhook-secret")
 
     feed_mock = AsyncMock()
     monkeypatch.setattr(webhook_endpoint.dp, "feed_update", feed_mock)
@@ -176,10 +176,24 @@ async def test_full_client_journey(
         webhook_endpoint.RedisService, "get_redis", staticmethod(lambda: fake_wh_redis)
     )
 
-    get_token_mock = AsyncMock(return_value="123:TEST")
-    monkeypatch.setattr(webhook_endpoint, "get_active_telegram_bot_token_by_username", get_token_mock)
+    fake_tg_bot = MagicMock()
+    fake_tg_bot.id = 1
+    fake_tg_bot.bot_token = "123:TEST"
+    fake_tg_bot.webhook_secret = "e2e-webhook-secret"
+    fake_tg_bot.tenant_id = tenant_id
+    fake_tg_bot.is_active = True
+    get_bot_mock = AsyncMock(return_value=fake_tg_bot)
+    monkeypatch.setattr(
+        webhook_endpoint,
+        "get_active_telegram_bot_by_username",
+        get_bot_mock,
+    )
     fake_bot = MagicMock()
     monkeypatch.setattr(webhook_endpoint.bot_registry, "get_bot", MagicMock(return_value=fake_bot))
+    from app.services import tenant_lifecycle_guard
+    monkeypatch.setattr(
+        tenant_lifecycle_guard, "check_tenant_operational_status", AsyncMock(return_value=(True, None))
+    )
 
     wh_res = await client.post(
         f"{settings.API_V1_STR}/webhook/test_bot",
@@ -192,6 +206,7 @@ async def test_full_client_journey(
                 "text": "/start",
             },
         },
+        headers={"x-telegram-bot-api-secret-token": "e2e-webhook-secret"},
     )
     assert wh_res.status_code == 200, f"Step 6 FAIL: webhook returned {wh_res.status_code}"
     assert wh_res.json()["status"] == "ok"

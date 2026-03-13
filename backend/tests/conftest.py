@@ -63,9 +63,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.db.session import Base, get_db
 from app.main import app
-from app.models.models import User, Shop, Service, Client, TariffPlan, Tenant, TenantStatus, UserRole
+from app.models.models import User, Shop, Service, Client, TariffPlan, Tenant, TenantStatus, UserRole, AuditLog  # AuditLog registers in Base.metadata before create_all
 from app.core.security import get_password_hash
 
+from app.models.models import AuditLog  # register in Base.metadata before create_all
 
 # Create tables for tests (sync wrapper for session scope)
 @pytest.fixture(scope="session")

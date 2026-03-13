@@ -8,7 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Tenant, TenantStatus
-from app.models.telegram_bot import TelegramBot
+from app.models.telegram_bot import TelegramBot, WebhookProvisioningStatus
+
+
+def assert_structured_502_detail(detail: dict) -> None:
+    assert isinstance(detail, dict)
+    assert "status" in detail
+    assert "message" in detail
+    assert "error" in detail
+    assert detail["status"] == WebhookProvisioningStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -156,6 +164,94 @@ async def test_webhook_provisioning_returns_url_and_secret_present(
     assert data["bot_id"] == bot_id
     assert "webhook_url" in data
     assert "webhook_secret_present" in data
+
+
+@pytest.mark.asyncio
+async def test_activate_webhook_502_returns_structured_detail(
+    client_superadmin: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """POST /tenants/1/telegram-bots/{id}/activate when provision fails → 502 with structured detail."""
+    from unittest.mock import AsyncMock
+    from app.services.telegram_webhook_service import ProvisioningResult
+
+    bot = TelegramBot(
+        tenant_id=1,
+        bot_token="test-token",
+        bot_username="activatebot",
+        webhook_secret="secret123",
+        is_active=True,
+    )
+    db_session.add(bot)
+    await db_session.commit()
+    await db_session.refresh(bot)
+
+    monkeypatch.setattr(
+        "app.api.endpoints.telegram_bots.provision_telegram_webhook",
+        AsyncMock(
+            return_value=ProvisioningResult(
+                success=False,
+                status=WebhookProvisioningStatus.FAILED,
+                message="Telegram API error",
+                error="Bad token",
+            )
+        ),
+    )
+
+    res = await client_superadmin.post(
+        f"/api/v1/tenants/1/telegram-bots/{bot.id}/activate"
+    )
+    assert res.status_code == 502
+
+    detail = res.json().get("detail")
+    assert_structured_502_detail(detail)
+    assert detail["message"] == "Telegram API error"
+    assert detail["error"] == "Bad token"
+
+
+@pytest.mark.asyncio
+async def test_provision_bot_webhook_502_returns_structured_detail(
+    client_superadmin: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """POST /tenants/1/bots/{id}/webhook when provision fails → 502 with structured detail."""
+    from unittest.mock import AsyncMock
+    from app.services.telegram_webhook_service import ProvisioningResult
+
+    bot = TelegramBot(
+        tenant_id=1,
+        bot_token="test-token",
+        bot_username="provisionbot",
+        webhook_secret="secret123",
+        is_active=True,
+    )
+    db_session.add(bot)
+    await db_session.commit()
+    await db_session.refresh(bot)
+
+    monkeypatch.setattr(
+        "app.api.endpoints.telegram_bots.provision_telegram_webhook",
+        AsyncMock(
+            return_value=ProvisioningResult(
+                success=False,
+                status=WebhookProvisioningStatus.FAILED,
+                message="SITE_URL is required for Telegram webhook provisioning",
+                error="SITE_URL is required for Telegram webhook provisioning",
+            )
+        ),
+    )
+
+    res = await client_superadmin.post(
+        f"/api/v1/tenants/1/bots/{bot.id}/webhook"
+    )
+    assert res.status_code == 502
+
+    detail = res.json().get("detail")
+    assert_structured_502_detail(detail)
+    assert detail["message"] == "SITE_URL is required for Telegram webhook provisioning"
+    assert detail["error"] == "SITE_URL is required for Telegram webhook provisioning"
 
 
 @pytest.mark.asyncio

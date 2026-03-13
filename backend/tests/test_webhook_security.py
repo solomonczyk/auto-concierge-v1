@@ -83,10 +83,21 @@ async def test_webhook_200_when_secret_correct(
     redis_mock.set = AsyncMock(return_value=True)
     monkeypatch.setattr(webhook_endpoint.RedisService, "get_redis", MagicMock(return_value=redis_mock))
 
-    get_token_mock = AsyncMock(return_value="123:TEST")
-    monkeypatch.setattr(webhook_endpoint, "get_active_telegram_bot_token_by_username", get_token_mock)
     fake_bot = MagicMock()
+    fake_bot.id = 1
+    fake_bot.bot_token = "123:TEST"
+    fake_bot.tenant_id = 1
+    fake_bot.webhook_secret = None
+    get_bot_mock = AsyncMock(return_value=fake_bot)
+    monkeypatch.setattr(webhook_endpoint, "get_active_telegram_bot_by_username", get_bot_mock)
     monkeypatch.setattr(webhook_endpoint.bot_registry, "get_bot", MagicMock(return_value=fake_bot))
+
+    from app.services import tenant_lifecycle_guard
+    monkeypatch.setattr(
+        tenant_lifecycle_guard,
+        "check_tenant_operational_status",
+        AsyncMock(return_value=(True, None)),
+    )
 
     response = await client.post(
         "/api/v1/webhook/test_bot",

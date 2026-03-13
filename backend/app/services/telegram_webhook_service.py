@@ -34,9 +34,22 @@ async def provision_telegram_webhook(
     Call Telegram setWebhook API and update bot provisioning state.
     Caller must ensure: tenant exists, bot is active, bot has webhook_secret.
     """
-    base = (settings.SITE_URL or "").rstrip("/")
+    now = datetime.now(timezone.utc)
+    base = (settings.SITE_URL or "").strip().rstrip("/")
+    if not base:
+        bot.webhook_status = WebhookProvisioningStatus.FAILED
+        bot.webhook_last_error = "SITE_URL is required for Telegram webhook provisioning"
+        bot.webhook_last_synced_at = now
+        await db.commit()
+        return ProvisioningResult(
+            success=False,
+            status=WebhookProvisioningStatus.FAILED,
+            message="Webhook base URL is not configured",
+            error="SITE_URL is required for Telegram webhook provisioning",
+        )
+
     webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
-    webhook_url = f"{base}{webhook_path}" if base else webhook_path
+    webhook_url = f"{base}{webhook_path}"
 
     api_url = f"https://api.telegram.org/bot{bot.bot_token}/setWebhook"
     payload = {"url": webhook_url, "secret_token": bot.webhook_secret}
@@ -58,8 +71,65 @@ async def provision_telegram_webhook(
             error=err_msg,
         )
 
-    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    data: dict = {}
+    if resp.headers.get("content-type", "").startswith("application/json"):
+        try:
+            data = resp.json()
+        except Exception as e:
+            err_msg = f"Invalid JSON from Telegram API: {e}"
+            logger.warning("[TelegramWebhook] %s", err_msg)
+            bot.webhook_status = WebhookProvisioningStatus.FAILED
+            bot.webhook_last_error = err_msg
+            bot.webhook_last_synced_at = datetime.now(timezone.utc)
+            await db.commit()
+            return ProvisioningResult(
+                success=False,
+                status=WebhookProvisioningStatus.FAILED,
+                message="Invalid response from Telegram API",
+                error=err_msg,
+            )
+
     now = datetime.now(timezone.utc)
+
+    if resp.status_code >= 400:
+        err_desc = data.get("description") or f"Telegram HTTP {resp.status_code}"
+        bot.webhook_status = WebhookProvisioningStatus.FAILED
+        bot.webhook_last_error = err_desc
+        bot.webhook_last_synced_at = now
+        await db.commit()
+        logger.warning(
+            "[TelegramWebhook] HTTP error: bot_id=%s tenant_id=%s status=%s error=%s",
+            bot.id,
+            bot.tenant_id,
+            resp.status_code,
+            err_desc,
+        )
+        return ProvisioningResult(
+            success=False,
+            status=WebhookProvisioningStatus.FAILED,
+            message="Telegram API HTTP error",
+            error=err_desc,
+        )
+
+    content_type = resp.headers.get("content-type", "")
+    if not content_type.startswith("application/json"):
+        err_desc = f"Unexpected Telegram content-type: {content_type or 'unknown'}"
+        bot.webhook_status = WebhookProvisioningStatus.FAILED
+        bot.webhook_last_error = err_desc
+        bot.webhook_last_synced_at = now
+        await db.commit()
+        logger.warning(
+            "[TelegramWebhook] Non-JSON response: bot_id=%s tenant_id=%s content_type=%s",
+            bot.id,
+            bot.tenant_id,
+            content_type,
+        )
+        return ProvisioningResult(
+            success=False,
+            status=WebhookProvisioningStatus.FAILED,
+            message="Unexpected response from Telegram API",
+            error=err_desc,
+        )
 
     if data.get("ok"):
         bot.webhook_status = WebhookProvisioningStatus.ACTIVE

@@ -103,10 +103,21 @@ async def _get_bot_and_provision_webhook(
     if not result.success:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=result.error or result.message,
+            detail={
+                "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                "message": result.message,
+                "error": result.error,
+            },
         )
 
     return bot
+
+
+def _build_webhook_url(bot: TelegramBot) -> str:
+    """Build full webhook URL from SITE_URL + API path, or path-only if SITE_URL unset."""
+    base = (settings.SITE_URL or "").rstrip("/")
+    webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
+    return f"{base}{webhook_path}" if base else webhook_path
 
 
 @router.post(
@@ -207,35 +218,10 @@ async def provision_bot_webhook(
     db: AsyncSession = Depends(get_db),
     _superadmin: User = Depends(require_superadmin),
 ) -> WebhookProvisionResponse:
-    bot = (
-        await db.execute(
-            select(TelegramBot).where(
-                TelegramBot.id == bot_id,
-                TelegramBot.tenant_id == tenant_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not bot:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram bot not found")
-    if not bot.bot_username or not bot.bot_username.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="bot_username is required for webhook; re-register the bot with username",
-        )
-    if not bot.webhook_secret or not bot.webhook_secret.strip():
-        bot.webhook_secret = secrets.token_urlsafe(32)[:256]
-        await db.commit()
-        await db.refresh(bot)
+    bot = await _get_bot_and_provision_webhook(db, tenant_id, bot_id)
 
-    result = await provision_telegram_webhook(db, bot)
-    if not result.success:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=result.error or result.message,
-        )
-    base = (settings.SITE_URL or "").rstrip("/")
-    webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
-    webhook_url = f"{base}{webhook_path}" if base else webhook_path
+    webhook_url = _build_webhook_url(bot)
+
     return WebhookProvisionResponse(
         tenant_id=tenant_id,
         bot_id=bot.id,
@@ -256,42 +242,9 @@ async def activate_telegram_bot(
     db: AsyncSession = Depends(get_db),
     _superadmin: User = Depends(require_superadmin),
 ) -> TelegramBotActivateResponse:
-    # 1. Bot must exist and belong to tenant
-    bot = (
-        await db.execute(
-            select(TelegramBot).where(
-                TelegramBot.id == telegram_bot_id,
-                TelegramBot.tenant_id == tenant_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not bot:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram bot not found")
+    bot = await _get_bot_and_provision_webhook(db, tenant_id, telegram_bot_id)
 
-    # 2. bot_username required for webhook route
-    if not bot.bot_username or not bot.bot_username.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="bot_username is required for webhook activation. Re-register the bot with bot_username.",
-        )
-
-    # 3. Ensure webhook_secret — generate only if missing
-    if not bot.webhook_secret or not bot.webhook_secret.strip():
-        bot.webhook_secret = secrets.token_urlsafe(32)[:256]
-        await db.commit()
-        await db.refresh(bot)
-
-    # 4. Call unified provisioning service
-    result = await provision_telegram_webhook(db, bot)
-    if not result.success:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=result.error or result.message,
-        )
-
-    base = (settings.SITE_URL or "").rstrip("/")
-    webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
-    webhook_url = f"{base}{webhook_path}" if base else webhook_path
+    webhook_url = _build_webhook_url(bot)
 
     return TelegramBotActivateResponse(
         telegram_bot_id=telegram_bot_id,
