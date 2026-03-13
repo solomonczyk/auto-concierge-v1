@@ -1,5 +1,14 @@
 # Development Log
 
+## 2026-03-13 — Public API Consistency: legacy cancel route deprecated
+
+Помечен PATCH /appointments/public/cancel как deprecated:
+- `@router.patch(..., deprecated=True)`
+- docstring: `DEPRECATED. Use POST /appointments/public/{appointment_id}/cancel instead.`
+- canonical: `POST /appointments/public/{appointment_id}/cancel`
+
+legacy cancel route deprecated
+
 ## 2026-03-12 — Alembic merge migration (multiple heads)
 
 Merge миграция для объединения двух heads: a7b8c9d0e1f2 (tenant status) и e7f8a9b0c1d2 (appointment_history reschedule). Новый head: b1c2d3e4f5a6.

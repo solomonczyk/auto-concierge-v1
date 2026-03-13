@@ -939,7 +939,11 @@ async def update_public_appointment_intake_answers(
 
 # ─── PATCH /appointments/public/cancel ────────────────────────────────────────
 
-@router.patch("/appointments/public/cancel", response_model=AppointmentCancelResponse)
+@router.patch(
+    "/appointments/public/cancel",
+    response_model=AppointmentCancelResponse,
+    deprecated=True,
+)
 @limiter.limit("30/minute")
 async def cancel_public_appointment(
     request: Request,
@@ -948,7 +952,7 @@ async def cancel_public_appointment(
     tenant_id: int = Depends(get_tenant_id_by_slug),
     db: AsyncSession = Depends(get_db),
 ):
-    """Cancel appointment. Returns fresh snapshot (same contract as POST cancel)."""
+    """DEPRECATED. Use POST /appointments/public/{appointment_id}/cancel instead."""
     result = await _cancel_public_appointment(
         db=db,
         tenant_id=tenant_id,
