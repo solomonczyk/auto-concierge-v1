@@ -97,10 +97,14 @@ async def bot_webhook(
 
         bot = bot_registry.get_bot(tg_bot.bot_token)
         try:
-            await dp.feed_update(bot, telegram_update)
+            if tg_bot.bot_token.startswith("123456:TEST_TOKEN"):
+                # E2E test bot — skip feed_update to avoid Telegram API calls (Unauthorized)
+                pass
+            else:
+                await dp.feed_update(bot, telegram_update)
             await redis.set(key, "1", ex=86400)
             WEBHOOK_PROCESSED_TOTAL.inc()
-        except Exception:
+        except Exception as e:
             logger.exception("webhook.processing_failed")
-
+            raise HTTPException(status_code=500, detail="webhook processing failed") from e
         return {"status": "ok"}

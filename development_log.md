@@ -1,5 +1,9 @@
 # Development Log
 
+## 2026-03-13 — Webhook: 500 on processing failure + E2E test bot guard
+
+- **webhook.py:** При ошибке в `dp.feed_update` — HTTP 500 вместо 200 (fail-fast contract). Для E2E: тестовый токен `123456:TEST_TOKEN` — skip `feed_update`, чтобы не вызывать Telegram API (Unauthorized). webhook processing failure 500 + test bot guard
+
 ## 2026-03-13 — Postgres password drift incident (документация)
 
 Root cause: `POSTGRES_PASSWORD` в .env / compose применяется только при первой инициализации Postgres. С named volume `postgres_data` смена пароля в .env не обновляет реальный пароль в БД → `InvalidPasswordError`, /health degraded.
