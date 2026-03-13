@@ -1,5 +1,12 @@
 # Development Log
 
+## 2026-03-13 — API Router & Webhook Resilience
+
+- **api.py:** Удалён дубликат `sla.router` (был подключён дважды). duplicate sla router removed
+- **webhook.py:** Idempotency key scoped per bot: `telegram_update:{tg_bot.id}:{update_id}` — защита multi-bot от конфликтов по update_id. webhook idempotency key scoped per bot
+
+api router topology + webhook resilience fixes
+
 ## 2026-03-13 — Public API Consistency: legacy cancel route deprecated
 
 Помечен PATCH /appointments/public/cancel как deprecated:

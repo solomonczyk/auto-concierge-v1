@@ -36,15 +36,7 @@ async def bot_webhook(
     WEBHOOK_REQUESTS_TOTAL.inc()
 
     telegram_update = Update(**update)
-
-    redis = RedisService.get_redis()
     update_id = telegram_update.update_id
-    key = f"telegram_update:{update_id}"
-
-    if await redis.exists(key):
-        return {"status": "ok", "msg": "already_processed"}
-
-    await redis.set(key, "1", ex=86400)
 
     async with async_session_local() as db:
         tg_bot = await get_active_telegram_bot_by_username(db, bot_username)
@@ -67,6 +59,12 @@ async def bot_webhook(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Tenant is suspended or disabled",
             )
+
+    key = f"telegram_update:{tg_bot.id}:{update_id}"
+    redis = RedisService.get_redis()
+    if await redis.exists(key):
+        return {"status": "ok", "msg": "already_processed"}
+    await redis.set(key, "1", ex=86400)
 
     expected_secret = tg_bot.webhook_secret or settings.TELEGRAM_WEBHOOK_SECRET
     if not expected_secret or not expected_secret.strip():
