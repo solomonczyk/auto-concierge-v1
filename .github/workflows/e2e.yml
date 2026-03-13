@@ -28,6 +28,7 @@ jobs:
       SEED_SHOP_NAME: Best Auto
       SEED_ADMIN_USER: admin
       SEED_ADMIN_PASS: admin
+      SEED_BOT_USERNAME: test_bot
 
     steps:
       - name: Checkout
@@ -72,6 +73,7 @@ jobs:
             -e SEED_SHOP_NAME="${SEED_SHOP_NAME}" \
             -e SEED_ADMIN_USER="${SEED_ADMIN_USER}" \
             -e SEED_ADMIN_PASS="${SEED_ADMIN_PASS}" \
+            -e SEED_BOT_USERNAME="${SEED_BOT_USERNAME}" \
             backend python scripts/seed_data.py
 
       - name: Wait for Backend HTTP

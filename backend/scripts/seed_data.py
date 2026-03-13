@@ -12,6 +12,7 @@ load_dotenv(os.path.join(os.getcwd(), "backend", ".env"))
 from sqlalchemy import select
 from app.db.session import async_session_local
 from app.models.models import Tenant, User, Shop, Service, UserRole
+from app.models.telegram_bot import TelegramBot
 from app.core.security import get_password_hash
 
 # Configure logging
@@ -90,7 +91,27 @@ async def seed_data():
             else:
                 logger.info("Admin User already exists")
 
-            # 3. Check/Create Services
+            # 3. Check/Create TelegramBot
+            logger.info("Checking TelegramBot...")
+            result = await db.execute(
+                select(TelegramBot).where(TelegramBot.bot_username == os.getenv("SEED_BOT_USERNAME", "test_bot"))
+            )
+            bot = result.scalar_one_or_none()
+
+            if not bot:
+                bot = TelegramBot(
+                    tenant_id=tenant.id,
+                    bot_username=os.getenv("SEED_BOT_USERNAME", "test_bot"),
+                    bot_token="0:SEED_E2E_PLACEHOLDER",
+                    is_active=True,
+                )
+                db.add(bot)
+                await db.flush()
+                logger.info("Created TelegramBot")
+            else:
+                logger.info("TelegramBot already exists")
+
+            # 4. Check/Create Services
             logger.info("Checking Services...")
             result = await db.execute(select(Service))
             existing_services = result.scalars().all()
