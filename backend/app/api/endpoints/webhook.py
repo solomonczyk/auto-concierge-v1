@@ -93,7 +93,7 @@ async def bot_webhook(
         key = f"telegram_update:{tg_bot.id}:{update_id}"
         redis = RedisService.get_redis()
         if await redis.exists(key):
-            return {"status": "ok", "msg": "already_processed"}
+            return {"msg": "already_processed"}
 
         bot = bot_registry.get_bot(tg_bot.bot_token)
         try:
