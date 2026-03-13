@@ -1,5 +1,13 @@
 # Development Log
 
+## 2026-03-13 — Postgres password drift incident (документация)
+
+Root cause: `POSTGRES_PASSWORD` в .env / compose применяется только при первой инициализации Postgres. С named volume `postgres_data` смена пароля в .env не обновляет реальный пароль в БД → `InvalidPasswordError`, /health degraded.
+
+Fix: `ALTER USER postgres WITH PASSWORD '...';` или `docker compose down -v` + `up` при reset dev.
+
+- **backend/README.md:** Добавлен блок "Postgres password drift with persisted volume" — symptoms, fix, текущий volume. incident doc + password drift note
+
 ## 2026-03-13 — Redis singleton cleanup
 
 Удалён лишний артефакт `redis_service = RedisService()` из redis_service.py. Используется только class-level singleton через `get_redis()`.
