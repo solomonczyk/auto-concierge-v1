@@ -207,12 +207,21 @@ class ExternalIntegrationService:
 
         try:
             if integration_type == "1c":
-                ok = await sync_to_1c(payload, integration_settings)
+                ok = await asyncio.wait_for(
+                    sync_to_1c(payload, integration_settings),
+                    timeout=settings.EXTERNAL_INTEGRATION_TIMEOUT_SECONDS,
+                )
                 return ok, None if ok else "1C sync returned unsuccessful result"
             elif integration_type == "alpha-auto":
-                ok = await sync_to_alpha_auto(payload, integration_settings)
+                ok = await asyncio.wait_for(
+                    sync_to_alpha_auto(payload, integration_settings),
+                    timeout=settings.EXTERNAL_INTEGRATION_TIMEOUT_SECONDS,
+                )
                 return ok, None if ok else "Alpha Auto sync returned unsuccessful result"
             return False, f"Unsupported integration type: {integration_type}"
+        except asyncio.TimeoutError:
+            logger.error("External integration timeout for tenant %s", tenant.id)
+            return False, "external integration timeout"
         except Exception as e:
             logger.error("Sync failed: %s", e)
             return False, str(e)[:500]
