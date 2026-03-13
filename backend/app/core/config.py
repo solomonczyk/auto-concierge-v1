@@ -39,7 +39,8 @@ class Settings(BaseSettings):
     
     REDIS_HOST: str
     REDIS_PORT: int = 6379
-    
+    REDIS_URL: Optional[str] = None  # optional override; else built from REDIS_HOST:REDIS_PORT
+
     TELEGRAM_BOT_TOKEN: str = "YOUR_BOT_TOKEN_HERE" # Placeholder, should be in .env
 
     SECRET_KEY: str = ""  # Will be set from environment or generated
@@ -95,6 +96,11 @@ class Settings(BaseSettings):
     WORK_START: int = 9  # Hour (0-23)
     WORK_END: int = 18   # Hour (0-23)
     SLOT_DURATION: int = 30  # Minutes
+
+    @property
+    def REDIS_URL_RESOLVED(self) -> str:
+        """Redis URL for FSM storage (REDIS_URL or built from HOST:PORT)."""
+        return self.REDIS_URL or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
 
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:

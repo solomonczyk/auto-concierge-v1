@@ -1,6 +1,6 @@
 """
 Centralized Telegram runtime bootstrap:
-- builds FSM storage
+- builds FSM storage (Redis)
 - creates shared Dispatcher
 - attaches handler graph exactly once
 """
@@ -14,30 +14,8 @@ from app.bot.handlers import router as bot_router
 
 logger = logging.getLogger(__name__)
 
-
-def _make_storage() -> RedisStorage | None:
-    """Build FSM storage backed by Redis. Falls back to memory if Redis is unavailable."""
-    try:
-        return RedisStorage.from_url(
-            f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/1"
-        )
-    except Exception as e:
-        logger.warning("Redis FSM storage unavailable, using MemoryStorage: %s", e)
-        return None
-
-
-def _build_dispatcher() -> Dispatcher:
-    storage = _make_storage()
-    if storage:
-        dispatcher = Dispatcher(storage=storage)
-    else:
-        from aiogram.fsm.storage.memory import MemoryStorage
-
-        dispatcher = Dispatcher(storage=MemoryStorage())
-
-    dispatcher.include_router(bot_router)
-    logger.info("Telegram dispatcher graph initialized")
-    return dispatcher
-
-
-dp = _build_dispatcher()
+# aiogram storage switched to redis
+storage = RedisStorage.from_url(settings.REDIS_URL_RESOLVED)
+dp = Dispatcher(storage=storage)
+dp.include_router(bot_router)
+logger.info("Telegram dispatcher graph initialized")

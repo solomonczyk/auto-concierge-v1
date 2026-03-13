@@ -77,7 +77,8 @@ async def get_or_create_tenant(
     if not db.in_transaction():
         await db.begin()
 
-    await db.execute(text("SET LOCAL app.current_tenant_id = :tenant_id"), {"tenant_id": str(tenant.id)})
+    # PostgreSQL SET LOCAL does not accept bound params ($1); use literal
+    await db.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant.id}'"))
 
     return tenant
 
