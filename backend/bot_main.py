@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.bot.loader import dp
 from app.bot.client import get_bot
-from app.bot.handlers import router as bot_router
 
 
 def _start_scheduler():
@@ -46,7 +45,6 @@ def _start_scheduler():
 
 async def main():
     logger.info("Starting bot standalone...")
-    dp.include_router(bot_router)
 
     bot = get_bot()
     if bot is None:

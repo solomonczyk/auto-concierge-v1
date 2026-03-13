@@ -60,12 +60,6 @@ async def bot_webhook(
                 detail="Tenant is suspended or disabled",
             )
 
-    key = f"telegram_update:{tg_bot.id}:{update_id}"
-    redis = RedisService.get_redis()
-    if await redis.exists(key):
-        return {"status": "ok", "msg": "already_processed"}
-    await redis.set(key, "1", ex=86400)
-
     expected_secret = tg_bot.webhook_secret or settings.TELEGRAM_WEBHOOK_SECRET
     if not expected_secret or not expected_secret.strip():
         WEBHOOK_REJECTED_TOTAL.labels(reason="no_secret").inc()
@@ -79,10 +73,29 @@ async def bot_webhook(
     ):
         WEBHOOK_REJECTED_TOTAL.labels(reason="forbidden").inc()
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden",
         )
 
+    key = f"telegram_update:{tg_bot.id}:{update_id}"
+    redis = RedisService.get_redis()
+    if await redis.exists(key):
+        return {"status": "ok", "msg": "already_processed"}
+
     bot = bot_registry.get_bot(tg_bot.bot_token)
-    await dp.feed_update(bot, telegram_update)
+    try:
+        await dp.feed_update(bot, telegram_update)
+    except Exception:
+        logger.exception(
+            "webhook.processing_failed",
+            extra={
+                "request_id": rid,
+                "bot_username": bot_username,
+                "tenant_id": tg_bot.tenant_id,
+                "update_id": update_id,
+            },
+        )
+        raise
+
+    await redis.set(key, "1", ex=86400)
     WEBHOOK_PROCESSED_TOTAL.inc()
     return {"status": "ok"}

@@ -7,7 +7,6 @@ import logging
 import secrets
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -70,6 +69,44 @@ class WebhookProvisionResponse(BaseModel):
     bot_username: str | None
     webhook_url: str
     webhook_secret_present: bool
+
+
+async def _get_bot_and_provision_webhook(
+    db: AsyncSession,
+    tenant_id: int,
+    bot_id: int,
+) -> TelegramBot:
+    """Load bot, ensure webhook_secret, call provision_telegram_webhook. Raises 404/400/502 on failure."""
+    bot = (
+        await db.execute(
+            select(TelegramBot).where(
+                TelegramBot.id == bot_id,
+                TelegramBot.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not bot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Telegram bot not found")
+
+    if not bot.bot_username or not bot.bot_username.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bot_username is required for webhook; re-register the bot with username",
+        )
+
+    if not bot.webhook_secret or not bot.webhook_secret.strip():
+        bot.webhook_secret = secrets.token_urlsafe(32)[:256]
+        await db.commit()
+        await db.refresh(bot)
+
+    result = await provision_telegram_webhook(db, bot)
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.error or result.message,
+        )
+
+    return bot
 
 
 @router.post(
@@ -189,8 +226,13 @@ async def provision_bot_webhook(
         bot.webhook_secret = secrets.token_urlsafe(32)[:256]
         await db.commit()
         await db.refresh(bot)
-    # Retry-safe: repeated call updates secret and re-calls Telegram setWebhook
-    await provision_telegram_webhook(db, bot)
+
+    result = await provision_telegram_webhook(db, bot)
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.error or result.message,
+        )
     base = (settings.SITE_URL or "").rstrip("/")
     webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
     webhook_url = f"{base}{webhook_path}" if base else webhook_path
@@ -233,43 +275,23 @@ async def activate_telegram_bot(
             detail="bot_username is required for webhook activation. Re-register the bot with bot_username.",
         )
 
-    # 3. Build webhook_url
+    # 3. Ensure webhook_secret — generate only if missing
+    if not bot.webhook_secret or not bot.webhook_secret.strip():
+        bot.webhook_secret = secrets.token_urlsafe(32)[:256]
+        await db.commit()
+        await db.refresh(bot)
+
+    # 4. Call unified provisioning service
+    result = await provision_telegram_webhook(db, bot)
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=result.error or result.message,
+        )
+
     base = (settings.SITE_URL or "").rstrip("/")
     webhook_path = f"{settings.API_V1_STR}/webhook/{bot.bot_username.strip()}"
     webhook_url = f"{base}{webhook_path}" if base else webhook_path
-
-    # 4. Generate and save per-bot webhook secret (tenant/bot isolation)
-    webhook_secret = secrets.token_urlsafe(32)[:256]
-    bot.webhook_secret = webhook_secret
-    await db.commit()
-    await db.refresh(bot)
-
-    # 5. Call Telegram setWebhook with bot-level secret
-    api_url = f"https://api.telegram.org/bot{bot.bot_token}/setWebhook"
-    payload = {"url": webhook_url, "secret_token": bot.webhook_secret}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(api_url, json=payload)
-    except Exception as e:
-        logger.exception("[TelegramBot] setWebhook failed: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to reach Telegram API",
-        ) from e
-
-    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    if not data.get("ok"):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=data.get("description", "Telegram setWebhook failed"),
-        )
-
-    logger.info(
-        "[TelegramBot] Activated: id=%s tenant_id=%s webhook=%s",
-        telegram_bot_id,
-        tenant_id,
-        webhook_url,
-    )
 
     return TelegramBotActivateResponse(
         telegram_bot_id=telegram_bot_id,
