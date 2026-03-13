@@ -41,11 +41,8 @@ async def bot_webhook(
     async with async_session_local() as db:
         tg_bot = await get_active_telegram_bot_by_username(db, bot_username)
         if not tg_bot:
-            WEBHOOK_REJECTED_TOTAL.labels(reason="unknown_bot").inc()
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Bot not found",
-            )
+            logger.warning("Webhook received for unknown bot: %s", bot_username)
+            return {"status": "ok"}
         # Lifecycle guard: reject webhook for non-operational tenant
         from app.services.tenant_lifecycle_guard import check_tenant_operational_status
         operational, _ = await check_tenant_operational_status(db, tg_bot.tenant_id)
