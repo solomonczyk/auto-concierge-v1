@@ -17,6 +17,7 @@ jobs:
       # Playwright contract
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
       PLAYWRIGHT_API_URL: http://127.0.0.1:8000
+      PLAYWRIGHT_BOT_USERNAME: test_bot
       PLAYWRIGHT_ADMIN_USER: admin
       PLAYWRIGHT_ADMIN_PASS: admin
       PLAYWRIGHT_SLUG: auto-concierge
@@ -121,6 +122,7 @@ jobs:
           CI: true
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
           PLAYWRIGHT_API_URL: http://127.0.0.1:8000
+          PLAYWRIGHT_BOT_USERNAME: test_bot
           PLAYWRIGHT_ADMIN_USER: admin
           PLAYWRIGHT_ADMIN_PASS: admin
           PLAYWRIGHT_SLUG: auto-concierge

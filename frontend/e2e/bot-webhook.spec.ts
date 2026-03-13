@@ -6,11 +6,12 @@ import { test, expect } from '@playwright/test'
  * Прод: PLAYWRIGHT_API_URL = https://bt-aistudio.ru (nginx проксирует /concierge/api/)
  */
 const apiBase = process.env.PLAYWRIGHT_API_URL || 'http://127.0.0.1:8000'
+const BOT_USERNAME = process.env.PLAYWRIGHT_BOT_USERNAME || 'test_bot'
 const isSameOrigin =
   process.env.PLAYWRIGHT_BASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.PLAYWRIGHT_BASE_URL)
 const WEBHOOK_URL = isSameOrigin
-  ? `${process.env.PLAYWRIGHT_BASE_URL!.replace(/\/$/, '')}/concierge/api/v1/webhook`
-  : `${apiBase.replace(/\/$/, '')}/api/v1/webhook`
+  ? `${process.env.PLAYWRIGHT_BASE_URL!.replace(/\/$/, '')}/concierge/api/v1/webhook/${BOT_USERNAME}`
+  : `${apiBase.replace(/\/$/, '')}/api/v1/webhook/${BOT_USERNAME}`
 
 test.describe('Bot Webhook', () => {
   const minimalUpdate = {
