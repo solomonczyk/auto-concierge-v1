@@ -1,5 +1,11 @@
 # Development Log
 
+## 2026-03-13 — Redis singleton cleanup
+
+Удалён лишний артефакт `redis_service = RedisService()` из redis_service.py. Используется только class-level singleton через `get_redis()`.
+
+redis singleton artifact removed
+
 ## 2026-03-13 — API Router & Webhook Resilience
 
 - **api.py:** Удалён дубликат `sla.router` (был подключён дважды). duplicate sla router removed

@@ -19,5 +19,3 @@ class RedisService:
         if cls._pool:
             await cls._pool.close()
             cls._pool = None
-
-redis_service = RedisService()
