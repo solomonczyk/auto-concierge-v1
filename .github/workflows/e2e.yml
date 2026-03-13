@@ -80,6 +80,18 @@ jobs:
             -e SEED_WEBHOOK_SECRET="${SEED_WEBHOOK_SECRET}" \
             backend python scripts/seed_data.py
 
+      - name: Seed test Telegram bot
+        run: |
+          docker compose exec -T db psql -U postgres -d autoservice -c "
+          UPDATE telegram_bots SET bot_token = '123456:TEST_TOKEN'
+          WHERE bot_username = 'test_bot' AND bot_token = '0:SEED_E2E_PLACEHOLDER';
+          INSERT INTO telegram_bots (tenant_id, bot_token, bot_username, is_active, webhook_secret)
+          SELECT t.id, '123456:TEST_TOKEN', 'test_bot', true, 'e2e-webhook-secret'
+          FROM tenants t WHERE t.slug = 'auto-concierge' AND NOT EXISTS (
+            SELECT 1 FROM telegram_bots b WHERE b.bot_token = '123456:TEST_TOKEN'
+          ) LIMIT 1;
+          "
+
       - name: Wait for Backend HTTP
         run: |
           for i in {1..60}; do

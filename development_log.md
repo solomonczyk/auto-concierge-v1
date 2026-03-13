@@ -4,6 +4,7 @@
 
 - **webhook.py:** При ошибке в `dp.feed_update` — HTTP 500 вместо 200 (fail-fast contract). Для E2E: тестовый токен `123456:TEST_TOKEN` — skip `feed_update`, чтобы не вызывать Telegram API (Unauthorized). webhook processing failure 500 + test bot guard
 - **CI + compose:** `APP_ENV=test` в e2e workflow, `APP_ENV` проброшен в backend через docker-compose. CI env wired
+- **CI seed:** Step "Seed test Telegram bot" — UPDATE seed bot token to 123456:TEST_TOKEN, INSERT fallback. CI bot seed added
 
 ## 2026-03-13 — Postgres password drift incident (документация)
 
