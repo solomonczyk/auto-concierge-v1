@@ -18,6 +18,7 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
       PLAYWRIGHT_API_URL: http://127.0.0.1:8000
       PLAYWRIGHT_BOT_USERNAME: test_bot
+      PLAYWRIGHT_WEBHOOK_SECRET: e2e-webhook-secret
       PLAYWRIGHT_ADMIN_USER: admin
       PLAYWRIGHT_ADMIN_PASS: admin
       PLAYWRIGHT_SLUG: auto-concierge
@@ -29,6 +30,7 @@ jobs:
       SEED_ADMIN_USER: admin
       SEED_ADMIN_PASS: admin
       SEED_BOT_USERNAME: test_bot
+      SEED_WEBHOOK_SECRET: e2e-webhook-secret
 
     steps:
       - name: Checkout
@@ -74,6 +76,7 @@ jobs:
             -e SEED_ADMIN_USER="${SEED_ADMIN_USER}" \
             -e SEED_ADMIN_PASS="${SEED_ADMIN_PASS}" \
             -e SEED_BOT_USERNAME="${SEED_BOT_USERNAME}" \
+            -e SEED_WEBHOOK_SECRET="${SEED_WEBHOOK_SECRET}" \
             backend python scripts/seed_data.py
 
       - name: Wait for Backend HTTP

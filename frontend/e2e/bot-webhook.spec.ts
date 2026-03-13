@@ -37,7 +37,10 @@ test.describe('Bot Webhook', () => {
   test('принимает Update и возвращает ok', async ({ request }) => {
     const res = await request.post(WEBHOOK_URL, {
       data: minimalUpdate,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Bot-Api-Secret-Token': process.env.PLAYWRIGHT_WEBHOOK_SECRET || 'e2e-webhook-secret',
+      },
     })
 
     if (res.status() === 403) {
@@ -53,7 +56,10 @@ test.describe('Bot Webhook', () => {
     const update = { ...minimalUpdate, update_id: 999888777 }
     const res1 = await request.post(WEBHOOK_URL, {
       data: update,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Bot-Api-Secret-Token': process.env.PLAYWRIGHT_WEBHOOK_SECRET || 'e2e-webhook-secret',
+      },
     })
 
     if (res1.status() === 403) test.skip(true, 'Webhook secret required')
@@ -62,7 +68,10 @@ test.describe('Bot Webhook', () => {
 
     const res2 = await request.post(WEBHOOK_URL, {
       data: update,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Bot-Api-Secret-Token': process.env.PLAYWRIGHT_WEBHOOK_SECRET || 'e2e-webhook-secret',
+      },
     })
     expect(res2.status()).toBe(200)
     const body = await res2.json()

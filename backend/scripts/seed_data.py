@@ -103,6 +103,7 @@ async def seed_data():
                     tenant_id=tenant.id,
                     bot_username=os.getenv("SEED_BOT_USERNAME", "test_bot"),
                     bot_token="0:SEED_E2E_PLACEHOLDER",
+                    webhook_secret=os.getenv("SEED_WEBHOOK_SECRET", "e2e-webhook-secret"),
                     is_active=True,
                 )
                 db.add(bot)
