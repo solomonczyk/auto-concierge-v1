@@ -1,8 +1,9 @@
 # Development Log
 
-## 2026-03-13 — Webhook: 500 on processing failure + E2E test bot guard
+## 2026-03-13 — Webhook: 500 on processing failure + E2E test bot guard + CI env
 
 - **webhook.py:** При ошибке в `dp.feed_update` — HTTP 500 вместо 200 (fail-fast contract). Для E2E: тестовый токен `123456:TEST_TOKEN` — skip `feed_update`, чтобы не вызывать Telegram API (Unauthorized). webhook processing failure 500 + test bot guard
+- **CI + compose:** `APP_ENV=test` в e2e workflow, `APP_ENV` проброшен в backend через docker-compose. CI env wired
 
 ## 2026-03-13 — Postgres password drift incident (документация)
 
