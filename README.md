@@ -49,6 +49,49 @@ See: [docs/BASELINE_MANIFEST.md](docs/BASELINE_MANIFEST.md)
 
 ## Архитектура
 
+### Architecture Map (Core Platform)
+
+```
+Client (Telegram / WebApp)
+│
+▼
+FastAPI API Layer
+(app/api/endpoints)
+│
+▼
+Service Layer
+(app/services)
+
+booking lifecycle
+
+webhook runtime
+
+integrations
+│
+▼
+Persistence Layer
+PostgreSQL (primary data)
+Redis (runtime state / idempotency / queues)
+│
+▼
+External Systems
+
+Telegram Bot API
+
+AI services (GigaChat / LLM)
+
+External integrations (1C / Alpha Auto)
+```
+
+**Key runtime guarantees:**
+- DB-level concurrency protection (EXCLUDE USING gist)
+- Webhook idempotency via Redis NX
+- Circuit breaker for external integrations
+- Integration timeouts
+- Health/readiness probes
+
+---
+
 ```
 auto-concierge-v1/
 ├── backend/                 # FastAPI приложение

@@ -103,6 +103,12 @@ class Settings(BaseSettings):
         return self.REDIS_URL or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/1"
 
     @property
+    def REDIS_QUEUE_URL(self) -> str:
+        """Redis URL for RQ queues/workers."""
+        base = self.REDIS_URL or f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
+        return base if base.rsplit("/", 1)[-1].isdigit() else f"{base}/0"
+
+    @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         user = quote_plus(self.POSTGRES_USER)
         password = quote(self.POSTGRES_PASSWORD, safe="")
@@ -110,7 +116,7 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.ENVIRONMENT.lower() == "production"
+        return self.ENVIRONMENT.strip().lower() in {"production", "prod"}
 
     @property
     def work_start_time(self) -> time:
@@ -122,6 +128,10 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        env_normalized = self.ENVIRONMENT.strip().lower()
+        allowed_envs = {"development", "dev", "production", "prod", "staging", "test"}
+        if env_normalized not in allowed_envs:
+            raise ValueError(f"Unsupported ENVIRONMENT value: {self.ENVIRONMENT}")
         # Set SECRET_KEY after initialization
         if not self.SECRET_KEY:
             self.SECRET_KEY = get_env_secret_key()
@@ -129,6 +139,12 @@ class Settings(BaseSettings):
             self.ENCRYPTION_KEY = get_env_encryption_key()
         if self.is_production and not self.TELEGRAM_WEBHOOK_SECRET:
             raise ValueError("TELEGRAM_WEBHOOK_SECRET must be set in production environment!")
+        if self.is_production and self.TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+            raise ValueError("TELEGRAM_BOT_TOKEN must be set in production environment!")
+        if self.is_production and (
+            "localhost" in self.WEBAPP_URL or "localhost" in self.SITE_URL
+        ):
+            raise ValueError("WEBAPP_URL and SITE_URL must not use localhost in production environment!")
         if self.is_production and not self.ENCRYPTION_KEY:
             raise ValueError("ENCRYPTION_KEY must be set in production environment!")
         if self.is_production and self.SECRET_KEY in ("", "dev-secret-key-change-in-production"):

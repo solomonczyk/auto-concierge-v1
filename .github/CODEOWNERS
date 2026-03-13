@@ -1,0 +1,15 @@
+# Core platform
+/backend/app/models/        @solomonczyk
+/backend/app/db/            @solomonczyk
+/backend/app/api/           @solomonczyk
+/backend/app/services/      @solomonczyk
+
+# Infrastructure
+/docker/                    @solomonczyk
+/docker-compose.yml         @solomonczyk
+
+# CI/CD
+/.github/workflows/         @solomonczyk
+
+# Default owner
+*                           @solomonczyk

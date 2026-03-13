@@ -102,7 +102,7 @@ async def bot_webhook(
                 pass
             else:
                 await dp.feed_update(bot, telegram_update)
-            await redis.set(key, "1", ex=86400)
+            await redis.set(key, "1", ex=86400, nx=True)
             WEBHOOK_PROCESSED_TOTAL.inc()
         except Exception as e:
             logger.exception("webhook.processing_failed")

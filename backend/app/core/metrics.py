@@ -57,6 +57,10 @@ APPOINTMENTS_EXTERNAL_SYNC_FAILED_TOTAL = Counter(
     "External integration sync enqueue failures",
     ["tenant_id"],
 )
+EXTERNAL_INTEGRATION_FAILURE_TOTAL = Counter(
+    "external_integration_failure_total",
+    "External integration jobs moved to DLQ (all retries exhausted)",
+)
 
 # ---------------------------------------------------------------------------
 # Webhook

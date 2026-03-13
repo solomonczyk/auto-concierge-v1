@@ -3,16 +3,16 @@ import pytest
 import asyncio
 from typing import AsyncGenerator, Generator
 from unittest.mock import patch
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
 # Patch starlette Config to skip .env on decode errors (Windows cp1252 vs UTF-8)
 try:
     from starlette import config
     _orig_read = config.Config._read_file
 
-    def _safe_read_file(self, path):
+    def _safe_read_file(self, path, encoding=None):
         try:
-            return _orig_read(self, path)
+            return _orig_read(self, path, encoding)
         except UnicodeDecodeError:
             return {}
 
@@ -250,7 +250,7 @@ async def db_session(create_tables) -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Provide HTTP client for API testing"""
-    async with AsyncClient(app=app, base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
 
 
@@ -272,7 +272,7 @@ async def _login_test_client(client: AsyncClient) -> AsyncClient:
 @pytest.fixture(scope="function")
 async def client_auth(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Authenticated client isolated from the raw `client` fixture."""
-    async with AsyncClient(app=app, base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield await _login_test_client(c)
 
 
@@ -319,5 +319,5 @@ async def _login_superadmin(client: AsyncClient) -> AsyncClient:
 @pytest.fixture
 async def client_superadmin(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Authenticated client as superadmin (for control-plane, tenants, etc.)."""
-    async with AsyncClient(app=app, base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield await _login_superadmin(c)

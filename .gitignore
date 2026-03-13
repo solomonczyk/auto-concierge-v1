@@ -42,3 +42,5 @@ artifacts/
 # OS
 Thumbs.db
 frontend/test-results/
+
+backend/pytest_output.txt

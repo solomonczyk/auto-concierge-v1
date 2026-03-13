@@ -7,8 +7,7 @@ listen = ['default']
 
 def run_worker():
     # Use sync Redis connection for RQ
-    redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}"
-    conn = Redis.from_url(redis_url)
+    conn = Redis.from_url(settings.REDIS_QUEUE_URL)
     
     with Connection(conn):
         worker = Worker(list(map(Queue, listen)))

@@ -8,13 +8,16 @@ from app.services.redis_service import RedisService
 logger = logging.getLogger(__name__)
 
 from redis import Redis
-from rq import Queue
+from rq import Queue, Retry
 from app.db.session import async_session_local
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 import asyncio
 
 from app.services.integrations.providers import sync_to_1c, sync_to_alpha_auto
+from app.core.metrics import EXTERNAL_INTEGRATION_FAILURE_TOTAL
+
+REDIS_CONN = Redis.from_url(settings.REDIS_QUEUE_URL)
 
 CIRCUIT_BREAKER_THRESHOLD = 5
 CIRCUIT_BREAKER_KEY_PREFIX = "integration_failures:"
@@ -52,6 +55,22 @@ async def _record_integration_success(tenant_id: int) -> None:
         await redis.delete(key)
     except Exception as e:
         logger.warning("Circuit breaker reset on success: %s", e)
+
+
+def move_to_dlq(job, exc_type, exc_value, traceback):
+    """
+    Move failed integration job to DLQ for investigation.
+    """
+    EXTERNAL_INTEGRATION_FAILURE_TOTAL.inc()
+    from rq import Queue
+    dlq = Queue("integrations_dlq", connection=job.connection)
+    dlq.enqueue(
+        job.func,
+        *job.args,
+        **job.kwargs,
+        retry=Retry(max=0),
+        failure_ttl=604800,
+    )
 
 
 class ExternalIntegrationService:
@@ -117,13 +136,18 @@ class ExternalIntegrationService:
         Never raises to caller - failures are logged and ignored.
         """
         try:
-            redis_url = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}"
-            q = Queue("default", connection=Redis.from_url(redis_url))
+            q = Queue(
+                "default",
+                connection=REDIS_CONN,
+                default_timeout=30,
+                failure_ttl=86400,
+            )
             q.enqueue(
                 ExternalIntegrationService.run_sync_job,
                 appointment_id,
                 tenant_id,
-                retry=3,  # Hardened: automatic retries
+                retry=Retry(max=3, interval=[10, 60, 300]),
+                on_failure=move_to_dlq,
             )
             return True
         except Exception as exc:
