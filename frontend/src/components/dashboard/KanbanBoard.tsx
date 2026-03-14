@@ -174,8 +174,8 @@ export default function KanbanBoard() {
             completed: [],
         };
         appointments
-            .filter((appt) => visibleSet.has(appt.status.toLowerCase() as (typeof KANBAN_VISIBLE_STATUSES)[number]))
-            .forEach((appt) => {
+            .filter((appt: Appointment) => visibleSet.has(appt.status.toLowerCase() as (typeof KANBAN_VISIBLE_STATUSES)[number]))
+            .forEach((appt: Appointment) => {
                 const status = appt.status.toLowerCase();
                 groups[status].push(appt);
             });
