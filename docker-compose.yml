@@ -1,11 +1,9 @@
-version: '3.8'
-
 services:
   backend:
+    restart: unless-stopped
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: autoservice_backend
     volumes:
       - ./backend:/app
     ports:
@@ -20,19 +18,31 @@ services:
       - SENTRY_DSN=${SENTRY_DSN:-}
       - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/live', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       default:
         aliases:
           - api
 
   worker:
+    restart: unless-stopped
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: autoservice_worker
     volumes:
       - ./backend:/app
     environment:
@@ -44,24 +54,26 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - SHOP_TIMEZONE=${SHOP_TIMEZONE:-Europe/Moscow}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: python -m app.worker
 
   frontend:
+    restart: unless-stopped
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: autoservice_frontend
     ports:
       - "3000:80"
     environment:
       - VITE_API_URL=http://localhost:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   db:
     image: postgres:15-alpine
-    container_name: autoservice_db
+    restart: unless-stopped
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -70,12 +82,24 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-autoservice}
     ports:
       - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoservice}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
-    container_name: autoservice_redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
 volumes:
   postgres_data:
