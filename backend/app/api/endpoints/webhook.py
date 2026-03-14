@@ -35,46 +35,33 @@ async def bot_webhook(
     )
     WEBHOOK_REQUESTS_TOTAL.inc()
 
-    # 1. Validate secret (before parsing body / bot lookup)
-    expected_secret = settings.TELEGRAM_WEBHOOK_SECRET
-    if expected_secret and expected_secret.strip():
-        if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
-            x_telegram_bot_api_secret_token, expected_secret
-        ):
-            WEBHOOK_REJECTED_TOTAL.labels(reason="forbidden").inc()
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    elif settings.ENVIRONMENT == "production":
-        WEBHOOK_REJECTED_TOTAL.labels(reason="no_secret").inc()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Webhook secret is not configured",
-        )
-
-    telegram_update = Update(**update)
-    update_id = telegram_update.update_id
-
     async with async_session_local() as db:
         # 2. Bot lookup
         tg_bot = await get_active_telegram_bot_by_username(db, bot_username)
 
-        # 3. Unknown bot
-        if not tg_bot:
-            logger.warning("Webhook received for unknown bot: %s", bot_username)
-            return {"status": "ok"}
-
-        # Per-bot secret (overrides global if set)
-        expected_secret = tg_bot.webhook_secret or settings.TELEGRAM_WEBHOOK_SECRET
+        expected_secret = (
+            (tg_bot.webhook_secret if tg_bot and tg_bot.webhook_secret else None)
+            or settings.TELEGRAM_WEBHOOK_SECRET
+        )
         if not expected_secret or not expected_secret.strip():
             WEBHOOK_REJECTED_TOTAL.labels(reason="no_secret").inc()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Webhook secret is not configured",
             )
+
         if not x_telegram_bot_api_secret_token or not secrets.compare_digest(
             x_telegram_bot_api_secret_token, expected_secret
         ):
             WEBHOOK_REJECTED_TOTAL.labels(reason="forbidden").inc()
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden",
+            )
+
+        if not tg_bot:
+            logger.warning("Webhook received for unknown bot: %s", bot_username)
+            return {"status": "ok"}
 
         # Lifecycle guard: reject webhook for non-operational tenant
         from app.services.tenant_lifecycle_guard import check_tenant_operational_status
@@ -90,6 +77,8 @@ async def bot_webhook(
                 detail="Tenant is suspended or disabled",
             )
 
+        telegram_update = Update(**update)
+        update_id = telegram_update.update_id
         key = f"telegram_update:{tg_bot.id}:{update_id}"
         redis = RedisService.get_redis()
         if await redis.exists(key):
