@@ -32,11 +32,11 @@ export default function CalendarView() {
 
     const events = useMemo(() => {
         return appointments
-            .filter(appt => {
+            .filter((appt: Appointment) => {
                 const status = appt.status.toUpperCase();
                 return status !== 'WAITLIST' && status !== 'CANCELLED';
             })
-            .map(appt => ({
+            .map((appt: Appointment) => ({
                 id: appt.id,
                 title: `Заказ #${appt.id}`,
                 start: new Date(appt.start_time),
