@@ -471,6 +471,7 @@ async def create_public_appointment(
             try:
                 stmt_collide = select(Appointment).where(
                     and_(
+                        Appointment.tenant_id == tenant_id,
                         Appointment.shop_id == shop.id,
                         Appointment.deleted_at.is_(None),
                         Appointment.status != AppointmentStatus.CANCELLED,

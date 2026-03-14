@@ -24,6 +24,15 @@ build/
 # Docker
 postgres_data/
 infra_data/
+redis_data/
+uploads/
+
+# Runtime / debug
+*.log
+*.lock
+locks/
+tmp/
+temp/
 
 # DB backups (may contain sensitive data)
 backups/
@@ -42,5 +51,4 @@ artifacts/
 # OS
 Thumbs.db
 frontend/test-results/
-
 backend/pytest_output.txt

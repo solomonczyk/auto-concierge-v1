@@ -36,6 +36,7 @@ from app.services.tenant_readiness_service import (
     compute_tenant_readiness,
     get_webhook_operational_state,
 )
+from app.services.audit_service import log_audit
 from app.services.telegram_webhook_service import provision_telegram_webhook
 
 router = APIRouter(prefix="/admin", tags=["admin", "control-plane"])
@@ -232,6 +233,18 @@ async def post_provision_webhook(
 
     result = await provision_telegram_webhook(db, bot)
 
+    if result.success:
+        await log_audit(
+            db,
+            tenant_id=tenant_id,
+            actor_user_id=_superadmin.id,
+            action="provision_webhook",
+            entity_type="telegram_bot",
+            entity_id=str(bot.id),
+            payload_after={"success": True, "status": result.status, "message": result.message},
+            source="admin_control_plane",
+        )
+
     return ProvisionWebhookResponse(
         tenant_id=tenant_id,
         action="provision_webhook",
@@ -259,6 +272,17 @@ async def post_finalize_onboarding(
     ok, message = await finalize_tenant_onboarding(db, tenant_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+    await log_audit(
+        db,
+        tenant_id=tenant_id,
+        actor_user_id=_superadmin.id,
+        action="finalize_onboarding",
+        entity_type="tenant",
+        entity_id=str(tenant_id),
+        payload_after={"finalized": True, "message": message, "status": "ACTIVE"},
+        source="admin_control_plane",
+    )
 
     return FinalizeOnboardingResponse(
         tenant_id=tenant_id,
