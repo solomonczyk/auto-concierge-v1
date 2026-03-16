@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-03-14 — docs/USER_SCENARIOS_FULL_SET.md (архитектурный deliverable)
+
+- Добавлен полный сет пользовательских сценариев для Auto-Concierge: роли (Superadmin, Tenant Admin, Operator, Client, External System), границы системы, карта сценариев.
+- Блоки A–N: онбординг tenant, настройка бизнеса (shop/service), публичная запись, Telegram-бот, слоты, appointment lifecycle, tenant isolation, интеграции, webhook, health/readiness, auth/roles, observability, failure recovery.
+- Матрица приоритетов: P0 (release blocking), P1 (stable ops), P2 (UX/scaling).
+- Минимальный тестовый контур: Smoke, Core E2E, Integration E2E, Isolation E2E.
+- Acceptance criteria на уровне продукта; вывод — архитектурные цепочки определяют production-ready SaaS.
+
+user scenarios full set doc
+
 ## 2026-03-13 — Webhook: 500 on processing failure + E2E test bot guard + CI env
 
 - **webhook.py:** При ошибке в `dp.feed_update` — HTTP 500 вместо 200 (fail-fast contract). Для E2E: тестовый токен `123456:TEST_TOKEN` — skip `feed_update`, чтобы не вызывать Telegram API (Unauthorized). webhook processing failure 500 + test bot guard
@@ -2256,6 +2266,10 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - Snapshot contract extended: added `can_reschedule`, `can_cancel` flags to `AppointmentSnapshotResponse`.
 - Flags are computed in the snapshot builder (not in endpoints): `appointment_snapshot_service.get_appointment_snapshot`.
 - Rules reuse: extracted shared rules to `app.services.appointment_lifecycle_rules` to avoid import cycles and keep lifecycle + snapshot consistent.
+
+## 2026-03-16 — Tenant isolation final acceptance checklist
+
+- Создан файл `docs/TENANT_ISOLATION_FINAL_ACCEPTANCE.md` с агрегирующим чеклистом финальной приёмки tenant isolation (источники: `PROJECT_EXECUTION_STRATEGY` §6, `USER_SCENARIOS_FULL_SET` блок H, 7.4 и §8). В таблице зафиксированы ключевые acceptance-условия, привязка к исходным документам, слоты под automated tests / manual checks и статус.
 
 ## 2026-03-12 — Client Action Consistency Layer (контур закрыт)
 
