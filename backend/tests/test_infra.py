@@ -20,7 +20,22 @@ from app.main import app
 @pytest.mark.asyncio
 async def test_health_returns_success(client: AsyncClient):
     """GET /health returns 200 when deps are available."""
-    res = await client.get("/health")
+    # Mock DB and Redis in shared readiness module
+    mock_sess = AsyncMock()
+    mock_sess.execute = AsyncMock(return_value=None)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_sess
+    mock_cm.__aexit__.return_value = None
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("app.core.readiness.async_session_local", return_value=mock_cm), patch(
+        "app.core.readiness.RedisService.get_redis", return_value=mock_redis
+    ):
+        res = await client.get("/health")
+
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
@@ -43,7 +58,22 @@ async def test_live_returns_success(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_ready_returns_success_when_deps_available(client: AsyncClient):
     """GET /ready returns 200 when DB and Redis are available."""
-    res = await client.get("/ready")
+    # Mock DB and Redis in shared readiness module
+    mock_sess = AsyncMock()
+    mock_sess.execute = AsyncMock(return_value=None)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_sess
+    mock_cm.__aexit__.return_value = None
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("app.core.readiness.async_session_local", return_value=mock_cm), patch(
+        "app.core.readiness.RedisService.get_redis", return_value=mock_redis
+    ):
+        res = await client.get("/ready")
+
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
@@ -61,8 +91,9 @@ async def test_ready_reflects_db_unavailable(client: AsyncClient):
     mock_cm.__aenter__.return_value = mock_sess
     mock_cm.__aexit__.return_value = None
 
-    with patch("app.db.session.async_session_local", return_value=mock_cm):
+    with patch("app.core.readiness.async_session_local", return_value=mock_cm):
         res = await client.get("/ready")
+
     assert res.status_code == 503
     data = res.json()
     assert data["status"] == "not_ready"
@@ -73,17 +104,10 @@ async def test_ready_reflects_db_unavailable(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_ready_reflects_redis_unavailable(client: AsyncClient):
     """GET /ready returns 503 when Redis is unavailable."""
-    from app.services import redis_service as redis_mod
-
-    original_get = redis_mod.RedisService.get_redis
-
-    async def failing_ping():
-        raise Exception("Connection refused")
-
     mock_redis = AsyncMock()
     mock_redis.ping = AsyncMock(side_effect=Exception("Connection refused"))
 
-    with patch.object(redis_mod.RedisService, "get_redis", return_value=mock_redis):
+    with patch("app.core.readiness.RedisService.get_redis", return_value=mock_redis):
         res = await client.get("/ready")
         assert res.status_code == 503
         data = res.json()
@@ -100,6 +124,8 @@ def test_production_config_fail_fast_missing_secret():
     env["SECRET_KEY"] = "dev-secret-key-change-in-production"
     env["TELEGRAM_WEBHOOK_SECRET"] = "test-secret"
     env["ENCRYPTION_KEY"] = "dGVzdC1lbmNyeXB0aW9uLWtleS0xMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
+    env["WEBAPP_URL"] = "https://app.example.com"
+    env["SITE_URL"] = "https://example.com"
     env["PYTHONPATH"] = backend_dir
     env.setdefault("POSTGRES_SERVER", "localhost")
     env.setdefault("POSTGRES_USER", "test")
@@ -126,6 +152,8 @@ def test_production_config_fail_fast_missing_encryption_key():
     env["ENVIRONMENT"] = "production"
     env["SECRET_KEY"] = "prod-secret-key-at-least-32-chars-long"
     env["TELEGRAM_WEBHOOK_SECRET"] = "test-secret"
+    env["WEBAPP_URL"] = "https://app.example.com"
+    env["SITE_URL"] = "https://example.com"
     env.pop("ENCRYPTION_KEY", None)
     env["PYTHONPATH"] = backend_dir
     env.setdefault("POSTGRES_SERVER", "localhost")

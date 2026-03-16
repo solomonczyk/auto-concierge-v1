@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.logging_config import configure_logging
 from app.core.rate_limit import limiter
 from app.core.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS_TOTAL, HTTP_ERROR_TOTAL
+from app.core.readiness import run_readiness_checks
 from app.api.api import api_router
 from app.bot.loader import dp
 from app.bot.handlers import router as bot_router
@@ -287,36 +288,6 @@ async def prometheus_metrics():
 # ---------------------------------------------------------------------------
 # Health endpoints: /live (liveness), /ready (readiness), /health (general)
 # ---------------------------------------------------------------------------
-
-async def _run_readiness_checks() -> tuple[dict[str, str], float]:
-    """Check DB and Redis. Returns (checks dict, elapsed_ms)."""
-    from sqlalchemy import text
-    from app.db.session import async_session_local
-    from app.services.redis_service import RedisService
-
-    checks: dict[str, str] = {}
-    start = time_module.monotonic()
-
-    try:
-        async with async_session_local() as session:
-            await session.execute(text("SELECT 1"))
-        checks["db"] = "ok"
-    except Exception as exc:
-        logger.error("[readiness] DB check failed: %s", exc)
-        checks["db"] = f"unavailable: {type(exc).__name__}"
-
-    try:
-        redis = RedisService.get_redis()
-        await redis.ping()
-        checks["redis"] = "ok"
-    except Exception as exc:
-        logger.error("[readiness] Redis check failed: %s", exc)
-        checks["redis"] = f"unavailable: {type(exc).__name__}"
-
-    elapsed_ms = round((time_module.monotonic() - start) * 1000)
-    return checks, elapsed_ms
-
-
 @app.api_route("/live", methods=["GET", "HEAD"])
 async def live():
     """Liveness: app is running, no dependency checks."""
@@ -326,7 +297,7 @@ async def live():
 @app.api_route("/ready", methods=["GET", "HEAD"])
 async def ready():
     """Readiness: DB and Redis must be available. 503 if any dependency down."""
-    checks, elapsed_ms = await _run_readiness_checks()
+    checks, elapsed_ms = await run_readiness_checks()
     all_ok = all(v == "ok" for v in checks.values())
 
     payload = {
@@ -344,7 +315,7 @@ async def ready():
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """General health: same as /ready, returns 500 if degraded (backward compat)."""
-    checks, elapsed_ms = await _run_readiness_checks()
+    checks, elapsed_ms = await run_readiness_checks()
     all_ok = all(v == "ok" for v in checks.values())
 
     payload = {
