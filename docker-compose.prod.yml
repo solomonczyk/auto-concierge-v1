@@ -81,7 +81,7 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      test: ["CMD-SHELL", "python -m app.core.health_probe --service worker_rq || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -110,7 +110,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      test: ["CMD-SHELL", "python -m app.core.health_probe --service bot || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -139,7 +139,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      test: ["CMD-SHELL", "python -m app.core.health_probe --service scheduler || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
