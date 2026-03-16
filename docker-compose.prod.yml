@@ -83,7 +83,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m app.core.health_probe --service worker_rq || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 40s
       retries: 3
       start_period: 20s
     networks:
@@ -112,7 +112,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m app.core.health_probe --service bot || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 40s
       retries: 3
       start_period: 20s
     networks:
@@ -141,7 +141,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "python -m app.core.health_probe --service scheduler || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 40s
       retries: 3
       start_period: 20s
     networks:
