@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from app.core.config import settings
@@ -108,6 +109,7 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
 
 @app.exception_handler(RateLimitExceeded)

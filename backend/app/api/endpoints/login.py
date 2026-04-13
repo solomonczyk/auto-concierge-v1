@@ -87,7 +87,21 @@ async def login_access_token(
 
     rid = getattr(request.state, "request_id", "-")
 
-    if not user or not security.verify_password(form_data.password, user.hashed_password):
+    password_ok = False
+    if user and user.hashed_password:
+        try:
+            password_ok = security.verify_password(
+                form_data.password, user.hashed_password
+            )
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "auth.password_verify_error username=%s err=%s",
+                form_data.username,
+                exc,
+                extra={"request_id": rid, "event_type": "auth_reject"},
+            )
+
+    if not user or not password_ok:
         logger.warning(
             "auth.login_failed username=%s",
             form_data.username,

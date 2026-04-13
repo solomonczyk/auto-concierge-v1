@@ -582,6 +582,7 @@ Potential risks that could delay launch:
 - slot scheduling conflicts
 - reminder scheduler misconfiguration
 - operator workflow gaps
+- single-resource scheduling limitation (one resource per shop) — see docs/RISK_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md
 
 **Mitigation strategy:** address these early during Client Booking Flow stage.
 

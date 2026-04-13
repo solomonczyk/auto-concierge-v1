@@ -1,0 +1,211 @@
+From c612eaa4e1c7265acdd8190df138aa67e769e5e9 Mon Sep 17 00:00:00 2001
+From: root <root@nikasal.fvds.ru>
+Date: Mon, 16 Mar 2026 21:41:40 +0300
+Subject: [PATCH 1/2] fix(prod): increase healthcheck timeouts to 40s
+
+---
+ docker-compose.prod.yml | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/docker-compose.prod.yml b/docker-compose.prod.yml
+index 25f27d0..f64f309 100644
+--- a/docker-compose.prod.yml
++++ b/docker-compose.prod.yml
+@@ -48,7 +48,7 @@ services:
+     healthcheck:
+       test: ["CMD-SHELL", "python3 -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/ready', timeout=5); exit(0 if r.getcode()==200 else 1)\" 2>/dev/null || exit 1"]
+       interval: 30s
+-      timeout: 10s
++      timeout: 40s
+       retries: 3
+       start_period: 40s
+     depends_on:
+@@ -83,7 +83,7 @@ services:
+     healthcheck:
+       test: ["CMD-SHELL", "python -m app.core.health_probe --service worker_rq || exit 1"]
+       interval: 30s
+-      timeout: 10s
++      timeout: 40s
+       retries: 3
+       start_period: 20s
+     networks:
+@@ -112,7 +112,7 @@ services:
+     healthcheck:
+       test: ["CMD-SHELL", "python -m app.core.health_probe --service bot || exit 1"]
+       interval: 30s
+-      timeout: 10s
++      timeout: 40s
+       retries: 3
+       start_period: 20s
+     networks:
+@@ -141,7 +141,7 @@ services:
+     healthcheck:
+       test: ["CMD-SHELL", "python -m app.core.health_probe --service scheduler || exit 1"]
+       interval: 30s
+-      timeout: 10s
++      timeout: 40s
+       retries: 3
+       start_period: 20s
+     networks:
+--
+2.43.0
+
+
+From e055956953212243aa9dcb30b090295d37b01eac Mon Sep 17 00:00:00 2001
+From: root <root@nikasal.fvds.ru>
+Date: Mon, 16 Mar 2026 21:44:51 +0300
+Subject: [PATCH 2/2] docs(risk): add P1 operational and scheduling risk notes
+
+---
+ ...AL_INTEGRATION_1_IMPORT_TIME_REDIS_INIT.md | 55 +++++++++++++
+ ...K_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md | 77 +++++++++++++++++++
+ 2 files changed, 132 insertions(+)
+ create mode 100644 docs/RISK_EXTERNAL_INTEGRATION_1_IMPORT_TIME_REDIS_INIT.md
+ create mode 100644 docs/RISK_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md
+
+diff --git a/docs/RISK_EXTERNAL_INTEGRATION_1_IMPORT_TIME_REDIS_INIT.md b/docs/RISK_EXTERNAL_INTEGRATION_1_IMPORT_TIME_REDIS_INIT.md
+new file mode 100644
+index 0000000..8c4f984
+--- /dev/null
++++ b/docs/RISK_EXTERNAL_INTEGRATION_1_IMPORT_TIME_REDIS_INIT.md
+@@ -0,0 +1,55 @@
++# Risk: External Integration Import-Time Redis Initialization
++
++## Status
++Open. Operational resilience risk.
++
++## Severity
++P1 operational resilience
++
++## Current behavior
++`backend/app/services/external_integration_service.py` creates Redis connection at module import time:
++
++- `REDIS_CONN = Redis.from_url(settings.REDIS_QUEUE_URL)`
++
++This connection object is later used by:
++
++- `ExternalIntegrationService.enqueue_appointment()`
++
++## Why this is a risk
++The module has an import-time side effect.
++
++If Redis queue configuration becomes invalid, missing, malformed, or unexpectedly incompatible,
++the module may fail too early during import or service startup, before the system reaches its
++intended fail-safe enqueue behavior.
++
++This weakens startup resilience and makes failure handling less explicit.
++
++## Why this is not currently a launch blocker
++Current enqueue logic is fail-safe for callers:
++
++- enqueue errors are caught
++- caller does not crash
++- function returns `False`
++
++So the direct runtime integration path is already partially hardened.
++
++## Architectural conclusion
++Current implementation is acceptable for launch baseline, but not ideal.
++
++Redis queue connection initialization should be converted to lazy initialization,
++so queue connection is created only at the moment of actual enqueue usage.
++
++## Recommended future change
++Replace import-time global initialization with one of:
++
++- local `Redis.from_url(...)` inside `enqueue_appointment()`
++- dedicated lazy getter for queue connection
++- shared queue factory with explicit error handling and logging
++
++## Trigger for redesign
++Prioritize redesign when any of the following happens:
++
++- startup/import instability appears in production
++- Redis configuration becomes environment-dependent across deployments
++- queue/integration layer is expanded
++- stricter service readiness guarantees are required
+diff --git a/docs/RISK_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md b/docs/RISK_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md
+new file mode 100644
+index 0000000..8c902fc
+--- /dev/null
++++ b/docs/RISK_SCHEDULING_1_SINGLE_RESOURCE_PER_SHOP.md
+@@ -0,0 +1,77 @@
++# Risk: Single Resource Scheduling Per Shop
++
++## Status
++Open. Accepted launch limitation.
++
++## Severity
++P1 domain limitation
++
++## Current behavior
++Appointments are protected from overlap by the database constraint:
++
++`appointments_no_overlap_per_shop`
++
++The constraint is defined on:
++
++- `shop_id`
++- `tstzrange(start_time, end_time, '[)')`
++
++Active statuses included:
++
++- `NEW`
++- `CONFIRMED`
++- `IN_PROGRESS`
++
++## Confirmed schema reality
++The `appointments` table currently has no dedicated planning resource field such as:
++
++- `resource_id`
++- `bay_id`
++- `operator_id`
++- `capacity`
++- `slot_capacity`
++
++Therefore the current effective scheduling model is:
++
++**one schedulable resource per shop**
++
++## Why current behavior is valid
++For the current launch baseline, this behavior is internally consistent:
++one appointment occupying a time slot blocks the whole shop.
++
++This prevents double booking under the existing STO launch model.
++
++## Why this becomes a future risk
++This model will produce false conflicts if the product evolves to support:
++
++- multiple service bays
++- multiple operators working in parallel
++- parallel capacity within one shop
++- resource-specific calendars
++- partial slot allocation
++
++## Architectural conclusion
++Current constraint is accepted as a **launch-safe baseline**.
++
++It must be redesigned when resource-based scheduling is introduced.
++
++## Recommended future migration target
++Replace overlap protection from:
++
++- `shop_id + time range`
++
++to one of:
++
++- `resource_id + time range`
++- `shop_id + bay_id + time range`
++- `shop_id + operator_id + time range`
++
++depending on the final scheduling domain model.
++
++## Trigger for redesign
++Redesign becomes mandatory immediately when any of the following appears in scope:
++
++- service bay scheduling
++- operator scheduling
++- parallel bookings in one shop
++- capacity-based slot allocation
+--
+2.43.0

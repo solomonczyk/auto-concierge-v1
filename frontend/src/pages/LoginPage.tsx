@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 import { useNavigate } from "react-router-dom"
+import axios from "axios"
 import { api } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -25,12 +26,16 @@ export default function LoginPage() {
             formData.append("username", username)
             formData.append("password", password)
 
-            await api.post("/login/access-token", formData, {
+            await api.post("/login/access-token", formData.toString(), {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
             })
 
             login()
-        } catch {
+        } catch (err: unknown) {
+            if (axios.isAxiosError(err) && err.response?.status && err.response.status >= 500) {
+                setError("Сервер временно недоступен. Попробуйте позже.")
+                return
+            }
             setError("Неверное имя пользователя или пароль")
         }
     }

@@ -22,10 +22,11 @@ Verify that the full booking lifecycle works reliably end-to-end.
 | 3 | Appointment visible to operator dashboard | USER_SCENARIOS | TBD | operator opens appointment | planned |
 | 4 | Status lifecycle works (new → confirmed → completed) | APPOINTMENT_LIFECYCLE | TBD | change status via API | planned |
 | 5 | DB prevents double booking (slot overlap) per tenant+service | DB constraint (appointments_no_overlap) | TBD | N/A (DB-level) | done |
-| 6 | Cancelled appointments do not trigger reminders | APPOINTMENT_LIFECYCLE | TBD | cancel and wait reminder window | planned |
-| 7 | Reminder delivery works | CONTROLLED_STO_LAUNCH_PLAN | TBD | wait reminder window | planned |
-| 8 | WebSocket updates propagate appointment changes | WS_EVENT_CONTRACT | TBD | observe operator UI | planned |
-| 9 | Telegram notification sent via tenant bot | notification_service | covered | check message delivery | planned |
+| 6 | Booking operations are idempotent (worker retry safe) | WORKER_RUNTIME_CONTRACT | TBD | retry reminder job manually | planned |
+| 7 | Cancelled appointments do not trigger reminders | APPOINTMENT_LIFECYCLE | TBD | cancel and wait reminder window | planned |
+| 8 | Reminder delivery works | CONTROLLED_STO_LAUNCH_PLAN | TBD | wait reminder window | planned |
+| 9 | WebSocket updates propagate appointment changes | WS_EVENT_CONTRACT | TBD | observe operator UI | planned |
+| 10 | Telegram notification sent via tenant bot | notification_service | covered | check message delivery | planned |
 
 ---
 
@@ -46,5 +47,17 @@ Double booking / race condition protection:
 - Added DB constraint: appointments_no_overlap (EXCLUDE USING gist on tenant_id, service_id, tstzrange(start_time,end_time,'[)') WITH &&) WHERE deleted_at IS NULL
 - Migration: 998c7b53488c_p0_prevent_double_booking_with_gist_.py
 Result: overlapping bookings are rejected at DB level (race-safe).
+
+Reminder pipeline verification:
+
+Reminder selection uses:
+
+- Appointment.status IN (NEW, CONFIRMED)
+- Appointment.deleted_at IS NULL
+
+Cancelled or completed appointments are excluded from reminder jobs.
+
+Result:
+Cancelled appointments cannot trigger reminders.
 
 

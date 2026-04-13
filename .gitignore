@@ -45,6 +45,12 @@ artifacts/
 *.key
 *.crt
 
+# Scripts with credentials (never commit)
+fix_password.py
+create_admin.py
+create_admin_safe.py
+get_hash.py
+
 # Binaries
 *.exe
 

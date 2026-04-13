@@ -1,5 +1,54 @@
 # Development Log
 
+## 2026-04-12 — CI/CD: GitHub Actions → SSH деплой на VPS
+
+- **`.github/workflows/deploy.yml`:** `push` на `main` и `workflow_dispatch` → `appleboy/ssh-action` выполняет на сервере `scripts/deploy-vps.sh`.
+- **`scripts/deploy-vps.sh`:** `git fetch` + `reset --hard` на ветку (по умолчанию `main`), `docker-compose build` backend/worker/frontend, `up -d`, `alembic upgrade head`.
+- **`docs/DEPLOY_CI_CD.md`:** секреты (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`, опционально `DEPLOY_BRANCH`), два типа SSH-ключей (раннер→VPS и VPS→GitHub для приватного репо), одноразовая инициализация git в `/opt/auto-concierge-v1`, предупреждение про Docker volumes при переносе каталога.
+
+## 2026-04-12 — Deploy на VPS 152.53.227.37 (/opt/auto-concierge-v1)
+
+На сервере нет `.git`; выкладка: архив `frontend`+`backend` (без `node_modules`) → `/tmp/ac-deploy.tgz` → `tar -xzf` в `/opt/auto-concierge-v1`, затем `docker-compose build backend worker frontend`, `up -d`, `alembic upgrade head`. Применена миграция `998c7b53488c` (gist exclude double booking). Контейнеры backend/frontend/worker пересозданы, статусы healthy/up.
+
+## 2026-04-12 — Login 500 / UX: audit savepoint, slowapi middleware, bcrypt guard, LoginPage
+
+**Симптом:** в браузере `POST /concierge/api/v1/login/access-token` как 500, в UI — «Неверное имя пользователя или пароль».
+
+**Проверка на VPS:** при неверном пароле бэкенд отдаёт **400** и пишет `auth.login_failed`; через nginx то же. Пароль из dev-seed (`admin123`) на проде не подошёл — учётная запись другая.
+
+**Код (устойчивость и честный UX):**
+- **audit_service.log_audit:** запись в `audit_logs` внутри `async with db.begin_nested()` — сбой flush не портит внешнюю транзакцию (например `commit` после логина).
+- **login.py:** `verify_password` в try/except (`ValueError`, `TypeError`) — битый bcrypt-хеш не превращается в 500.
+- **main.py:** подключён **SlowAPIMiddleware** (раньше был только `Limiter` + handler без middleware).
+- **LoginPage.tsx:** тело формы как строка (`URLSearchParams.toString()`), при ответе **≥500** отдельный текст «Сервер временно недоступен…».
+
+Деплой: пересобрать/перезапустить backend и frontend на сервере.
+
+## 2026-04-12 — VPS 152.53.227.37: nginx health + WebSocket upstream
+
+**Контекст:** Диагностика `root@152.53.227.37` (bt-aistudio.ru, Docker auto-concierge).
+
+**Найдено:**
+- `https://…/concierge/api/health` → 404: FastAPI отдаёт `/health`, не `/api/health`; префикс `/concierge/api/` уводил запрос на несуществующий путь.
+- `/concierge/health` отдавал HTML SPA вместо JSON бэкенда (UptimeRobot и скрипты видели «200», но не проверяли БД).
+- WebSocket: `proxy_pass` на `http://127.0.0.1:8000/ws` и `…/concierge_api/v1/ws` не совпадали с реальным маршрутом `/api/v1/ws`.
+
+**Сделано на сервере:** `/etc/nginx/sites-available/bt-aistudio` — добавлены `location = /concierge/health` и `= /concierge/api/health` → `8000/health`; исправлены оба WS `proxy_pass` на `8000/api/v1/ws`; `nginx -t` + `nginx -s reload`. Бэкапы: `*.bak.before-concierge-health`, `*.bak.ws-fix`.
+
+**В репозитории:** `nginx-bt-aistudio.conf` синхронизирован с этими правилами; `scripts/patch-nginx-concierge-health.sh` — идемпотентный патч health (при необходимости scp + bash на VPS).
+
+**Риски:** старые записи в `error.log` (SSL bad key share — сканеры; `studioaisolutions.ru` + refused — не из текущего `nginx -T`, только `bt-aistudio.ru`). Мёртвые чужие контейнеры на хосте не трогались.
+
+## 2026-03-17 — Fix 404: API base URL + nginx /concierge/api/
+
+**Проблема:** WebApp запрашивал `https://bt-aistudio.ru/api/v1/me` и `/login/access-token` → 404. API доступен по `/concierge/api/v1/`.
+
+**Изменения:**
+- **frontend/src/lib/api.ts:** `baseURL` = `(import.meta.env.BASE_URL || "/concierge/").replace(/\/$/, "") + "/api/v1"` — запросы идут на `/concierge/api/v1/...`
+- **setup-nginx-concierge.sh:** добавлен блок `location /concierge/api/` → proxy на 8002/api/ (выше /concierge/)
+
+**Деплой:** после pull — `docker compose -f docker-compose.prod.yml build frontend && up -d frontend`. На сервере: при необходимости повторно `bash setup-nginx-concierge.sh` + `nginx -t && systemctl reload nginx`.
+
 ## 2026-03-14 — docs/USER_SCENARIOS_FULL_SET.md (архитектурный deliverable)
 
 - Добавлен полный сет пользовательских сценариев для Auto-Concierge: роли (Superadmin, Tenant Admin, Operator, Client, External System), границы системы, карта сценариев.
@@ -2278,3 +2327,7 @@ python -m pytest tests/integration/test_patch_status_ws_e2e.py -v
 - **Контракт**: cancel (POST и PATCH) и reschedule возвращают snapshot-based response с `can_reschedule`, `can_cancel`.
 - **Regression tests**: `test_public_cancel_returns_fresh_snapshot_with_capability_flags`, `test_public_reschedule_returns_fresh_snapshot_with_capability_flags`, `test_public_patch_cancel_returns_fresh_snapshot`.
 - Аудит: `docs/CLIENT_ACTION_CONSISTENCY_AUDIT.md`.
+
+## 2026-03-16 — Import bootstrap audit
+
+- Создан файл `docs/IMPORT_BOOTSTRAP_AUDIT.md` с аудитом import-time side effects в `backend/app` (Redis.from_url, RQ Queue creation, bot loader). Зафиксировано, что критичных import-time bootstrap побочек не найдено, архитектура бутстрапа признана безопасной для production runtime.

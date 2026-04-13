@@ -51,20 +51,23 @@ async def log_audit(
 ) -> None:
     """
     Write a single audit log entry. Never raises — failures are logged only.
+    Uses a savepoint so a failed flush cannot poison the outer transaction
+    (e.g. login commit after a bad audit insert).
     """
     try:
-        entry = AuditLog(
-            tenant_id=tenant_id,
-            actor_user_id=actor_user_id,
-            action=action,
-            entity_type=entity_type,
-            entity_id=str(entity_id) if entity_id is not None else None,
-            payload_before=_safe_payload(payload_before),
-            payload_after=_safe_payload(payload_after),
-            source=source,
-        )
-        db.add(entry)
-        await db.flush()
+        async with db.begin_nested():
+            entry = AuditLog(
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                action=action,
+                entity_type=entity_type,
+                entity_id=str(entity_id) if entity_id is not None else None,
+                payload_before=_safe_payload(payload_before),
+                payload_after=_safe_payload(payload_after),
+                source=source,
+            )
+            db.add(entry)
+            await db.flush()
     except Exception as exc:
         logger.warning(
             "audit_log.write_failed action=%s entity_type=%s entity_id=%s: %s",

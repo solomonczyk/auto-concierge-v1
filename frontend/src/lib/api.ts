@@ -8,8 +8,9 @@ function getCsrfToken(): string | null {
     return match ? decodeURIComponent(match[1]) : null
 }
 
+const apiBase = (import.meta.env.BASE_URL || "/concierge/").replace(/\/$/, "") + "/api/v1"
 export const api = axios.create({
-    baseURL: "/api/v1",
+    baseURL: apiBase,
     headers: {
         "Content-Type": "application/json",
     },
